@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+*.whl
+*.tar.gz
+
+# Testing / tooling
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment / secrets
+.env
+.env.local
+
+# Editor state
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# KiCad autosave / backup
+*-bak/
+*.kicad_*.bak
+*.kicad_pcb-bak
+*.kicad_sch-bak
+_autosave-*
+
+# Local session state (per-project, not shared)
+.kicad_jlcpcb_session.json
+
+# Local Claude Code user settings (per-machine, not shared)
+.claude/
+

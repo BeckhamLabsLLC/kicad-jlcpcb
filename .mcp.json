@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "kicad-jlcpcb": {
+      "command": "kicad-jlcpcb",
+      "args": []
+    }
+  }
+}

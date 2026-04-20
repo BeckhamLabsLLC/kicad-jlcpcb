@@ -1,0 +1,38 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests (non-KiCad suite)
+        env:
+          PYTHONPATH: src
+        run: pytest tests/ --tb=short -v
+
+      # Note: KICAD_INSTALLED=1 integration tests require a KiCad install with
+      # the pcbnew Python bindings and are not run in CI. Run them locally with:
+      #   KICAD_INSTALLED=1 PYTHONPATH=src pytest tests/

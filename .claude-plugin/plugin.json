@@ -1,0 +1,26 @@
+{
+  "name": "kicad-jlcpcb",
+  "version": "0.1.0",
+  "description": "Generate JLCPCB-ready KiCad PCB projects from descriptions, BOMs, or existing projects. Sources LCSC parts (basic-tier preferred), generates schematics, and packages routed boards into Gerber/drill/CPL/BOM zips ready to upload to JLCPCB.",
+  "author": {
+    "name": "BeckhamLabs",
+    "url": "https://github.com/BeckhamLabsLLC"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/BeckhamLabsLLC/kicad-jlcpcb",
+  "homepage": "https://github.com/BeckhamLabsLLC/kicad-jlcpcb",
+  "keywords": [
+    "mcp",
+    "claude-code",
+    "claude-code-plugin",
+    "kicad",
+    "jlcpcb",
+    "lcsc",
+    "pcb",
+    "electronics",
+    "hardware",
+    "gerber",
+    "schematic",
+    "eda"
+  ]
+}
