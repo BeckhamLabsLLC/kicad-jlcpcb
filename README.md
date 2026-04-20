@@ -4,59 +4,87 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](#requirements)
 [![KiCad 8+](https://img.shields.io/badge/kicad-8.0%2B-informational.svg)](https://www.kicad.org/)
 [![Tests](https://img.shields.io/badge/tests-212%20passing-brightgreen.svg)](#testing)
+[![MCP](https://img.shields.io/badge/MCP-server-8A2BE2.svg)](https://modelcontextprotocol.io/)
 
-A Claude Code plugin that takes a PCB project from **"I want a board that does X"** to a ready-to-import KiCad file that EasyEDA auto-routes and JLCPCB manufactures with one click.
+> From "I want a board that does X" to a wired `.kicad_pcb` EasyEDA can auto-route and JLCPCB can build — in a single Claude Code conversation.
 
-> **Phase 1.6.** LCSC part sourcing (basic-tier preferred), EasyEDA pin-map auto-fetch, schematic generation, and fully-wired `.kicad_pcb` generation via KiCad's `pcbnew` Python API. Ends with a handoff to EasyEDA's web app for the parts this plugin can't automate reliably: routing and ordering.
+`kicad-jlcpcb` is a Claude Code plugin + MCP server that automates the tedious half of going from idea to fab. It sources LCSC parts with a hard preference for JLCPCB basic-library stock, auto-fetches pin maps from EasyEDA, places KiCad-stdlib footprints, wires every net by pin **name** (not pad number), and hands off a `.kicad_pcb` that EasyEDA can route and order in two clicks.
 
-## What changed from earlier phases
+```text
+┌─ you ──────────────────────────────────┐
+│  /pcb-new An ESP32-C3 soil-moisture    │
+│          sensor, USB-C, 3.3V LDO...    │
+└────────────────┬───────────────────────┘
+                 │
+   ┌─────────────▼─────────────┐
+   │  kicad-jlcpcb MCP server  │
+   │  • source parts (LCSC)    │
+   │  • fetch pin maps         │
+   │  • place + wire footprints│
+   │  • save .kicad_pcb        │
+   └─────────────┬─────────────┘
+                 │
+       drag into easyeda.com
+                 │
+             Auto Route
+                 │
+          Order via JLCPCB
+```
 
-Earlier releases tried to route the board headlessly with Freerouting and produce a JLCPCB Gerber zip directly. That didn't work for real boards — Freerouting 2.1.0 has CLI bugs, it can't route RF matching networks, and it won't save partial results. Phase 1.6 takes the pragmatic win: **the plugin wires everything up, EasyEDA routes and orders.**
+---
 
-The tradeoff: you need to open the `.kicad_pcb` in EasyEDA's web editor and click two buttons (Auto Route, Order). In exchange you get reliability the open-source tooling can't match, and a one-click path to a JLCPCB order instead of downloading a Gerber zip and uploading it.
+## Why this plugin
 
-## What it does
+Three recurring friction points in small-batch PCB work, automated:
 
-- **LCSC catalog.** Downloads the full jlcparts mirror (~17 MB) into a local SQLite cache on first use. ~569k parts, queryable in milliseconds with a hard preference for JLCPCB basic-library parts.
-- **Part sourcing.** Free-text search, BOM row resolution with cost-impact warnings for extended-tier parts ($3 each for SMT assembly setup).
-- **Pin-map auto-fetch.** Queries EasyEDA's component endpoint for any LCSC C-number and returns the pin-name → pad-number map. Rate-limited (~12 s between unique parts) and cached indefinitely in SQLite.
-- **PCB generation.** Uses KiCad's `pcbnew` Python API to place real KiCad-stdlib footprints on a three-band grid (connectors / ICs / passives), wire every net pad-to-pad by resolved pin names, and save a valid `.kicad_pcb`.
-- **EasyEDA handoff.** Produces the import instructions so the user drags the file into easyeda.com for routing and ordering.
-- **Session persistence.** A `.kicad_jlcpcb_session.json` in each project tracks where you left off so `/pcb-new` can resume mid-flow after a Claude Code restart.
+1. **"Is this part basic or extended on JLCPCB?"** — You stop needing to cross-reference LCSC's UI. The plugin's SQLite-cached jlcparts mirror answers in milliseconds and always prefers basic-tier (no $3/part assembly setup fee).
+2. **"What's the right pad number for this IC's `GPIO10`?"** — You stop reading datasheets to build netlists. The plugin queries EasyEDA by LCSC C-number, caches the pin-name → pad-number map, and lets you reference pins by their functional names.
+3. **"Why is my auto-router failing?"** — You stop fighting Freerouting on RF boards. The plugin stops at "wired `.kicad_pcb`" and hands off to EasyEDA's cloud auto-router, which works on real designs.
+
+---
+
+## Quick tour
+
+- **Two slash commands**: `/pcb-new` (from a description) and `/pcb-from-bom` (from a CSV).
+- **One agent**: `part-sourcer` — finds the best JLCPCB-stocked part for a generic spec.
+- **One skill**: `kicad-jlcpcb-workflow` — the full reference the LLM consults while driving the workflow.
+- **13 MCP tools** covering setup, sourcing, schematic, PCB generation, EasyEDA handoff, and session resume.
+- **Session persistence** — each project writes a `.kicad_jlcpcb_session.json` so `/pcb-new` can resume mid-flow after a Claude Code restart.
+
+---
 
 ## Requirements
 
-- **Python 3.10+** (3.10, 3.11, 3.12, and 3.13 are tested)
-- **KiCad 8.0 or newer** — `kicad-cli` on `PATH`, `pcbnew` Python module installable. Verified with KiCad 9.0.8 on Fedora 43.
-- **A free EasyEDA account** (for the routing + ordering step at the end)
+| Component | Version | Notes |
+|---|---|---|
+| Python | 3.10 – 3.13 | Tested on all four |
+| KiCad | 8.0+ | `kicad-cli` on `PATH`, `pcbnew` Python bindings for `pcb_generate` |
+| EasyEDA account | free | Only needed for the final routing + ordering step |
 
-On Fedora 43: `sudo dnf install kicad`. On Ubuntu 22.04+: `sudo add-apt-repository ppa:kicad/kicad-9.0-releases && sudo apt install kicad`. On macOS: install KiCad from [kicad.org/download](https://www.kicad.org/download/).
+Install KiCad:
+
+- **Fedora 40+:** `sudo dnf install kicad`
+- **Ubuntu 22.04+:** `sudo add-apt-repository ppa:kicad/kicad-9.0-releases && sudo apt install kicad`
+- **Arch:** `sudo pacman -Syu kicad`
+- **macOS:** [kicad.org/download](https://www.kicad.org/download/)
+
+---
 
 ## Install
 
-This plugin is distributed via GitHub (not PyPI, not the Claude Code marketplace). Clone it and install locally.
+Distributed via GitHub only — no PyPI, no marketplace. Clone and install locally.
 
-### Option A — system/user Python
-
-```bash
-git clone https://github.com/BeckhamLabsLLC/kicad-jlcpcb.git
-cd kicad-jlcpcb
-pip install -e .
-```
-
-This installs the `kicad-jlcpcb` entry-point script onto your `PATH`. `.mcp.json` calls that script directly.
-
-### Option B — virtualenv (preferred for sandboxing)
+### 1. Clone + install (virtualenv recommended)
 
 ```bash
 git clone https://github.com/BeckhamLabsLLC/kicad-jlcpcb.git
 cd kicad-jlcpcb
 python -m venv .venv
-source .venv/bin/activate       # Windows: .\.venv\Scripts\activate
+source .venv/bin/activate     # Windows: .\.venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-Then edit `.mcp.json` in the plugin root so `"command"` points at the venv's entry-point:
+The editable install puts a `kicad-jlcpcb` entry-point script in the venv's `bin/`. `.mcp.json` calls that script directly; if the venv isn't active when Claude Code launches, point `.mcp.json` at the absolute path:
 
 ```json
 {
@@ -69,20 +97,28 @@ Then edit `.mcp.json` in the plugin root so `"command"` points at the venv's ent
 }
 ```
 
-### Register with Claude Code
+If you'd rather install into your user Python without a venv, substitute `pip install -e .` after `cd kicad-jlcpcb` and skip the venv lines. The entry-point lands in `~/.local/bin` instead.
 
-Use a local marketplace that points at the cloned directory:
+### 2. Register with Claude Code
 
 ```
 /plugin marketplace add /abs/path/to/kicad-jlcpcb
 /plugin install kicad-jlcpcb@local
 ```
 
-Restart Claude Code afterward so the MCP server registers.
+Restart Claude Code so the MCP server registers.
 
-## Quick-start: build your first PCB in five minutes
+### 3. Sanity check
 
-Pick a room-temperature idea. Something small — an ESP32-C3 board with one sensor, a USB-C port, and an LDO is ideal:
+```bash
+kicad-jlcpcb --help     # should print nothing (MCP servers speak JSON-RPC on stdio), exit 0
+```
+
+---
+
+## Five-minute quick-start
+
+Pick a small idea — an ESP32-C3 board with one sensor, a USB-C port, and an LDO works well. Run:
 
 ```
 /pcb-new An ESP32-C3 soil-moisture sensor with two capacitive probes,
@@ -90,25 +126,41 @@ Pick a room-temperature idea. Something small — an ESP32-C3 board with one sen
          Place it on an 80x60 mm board.
 ```
 
-Claude drives the workflow: `detect_kicad` → `create_project` → parts sourcing → **BOM checkpoint** (you confirm or swap extended parts) → `pcb_generate` → `easyeda_handoff`.
+Claude walks you through:
 
-The full trace for this example — including every tool call, expected timing, and the JSON the plugin returns — is in [`examples/soilnode-esp32/walkthrough.md`](examples/soilnode-esp32/walkthrough.md).
+1. `detect_kicad` — verify the toolchain (< 1 s)
+2. `create_project` — scaffold `.kicad_pro` + `.kicad_sch` + session file
+3. Decomposes the description into ~12 generic part specs
+4. `lcsc_search` per spec (first run populates the 17 MB jlcparts cache)
+5. **BOM checkpoint** — shows every resolved part, flags extended-tier ones with cost warnings, and waits for your confirmation
+6. `pcb_generate` — fetches EasyEDA pin maps (~12 s per unique IC, first run only), places footprints, wires nets, saves `.kicad_pcb`
+7. `easyeda_handoff` — prints the import instructions
 
-First run takes ~90 s (17 MB catalog download + 12 s EasyEDA pin-map fetch per unique IC). After that, runs on similar designs are under 10 s.
+The full trace with real timings and tool outputs: **[`examples/soilnode-esp32/walkthrough.md`](examples/soilnode-esp32/walkthrough.md)**.
 
-## Commands
+First run: ~90 s. Subsequent runs on similar designs: under 10 s.
 
-- **`/pcb-new <description>`** — start a fresh project from a text description. Drives detection → project create → part sourcing → BOM checkpoint → pin-map fetch → `.kicad_pcb` generation → EasyEDA handoff. Offers to resume if a `.kicad_jlcpcb_session.json` already exists at the target path.
-- **`/pcb-from-bom <path-to-csv>`** — start from an LCSC BOM CSV and optional design-intent notes. Skips part sourcing and goes straight to pin-map fetch + generation.
+---
+
+## What the plugin does **not** do
+
+Set expectations honestly before you start:
+
+- ❌ **Auto-route traces.** That's why the `.kicad_pcb` gets handed to EasyEDA. Freerouting 2.1.0's CLI is buggy and can't handle RF matching networks; nothing else works headlessly well enough to ship.
+- ❌ **Beautiful placement.** The three-band grid (connectors on top, ICs in the middle, passives below) is functional, not pretty. You rearrange in EasyEDA before routing.
+- ❌ **Design review.** There's no DRC integration (yet — see Roadmap). The plugin trusts your spec and relies on KiCad / EasyEDA to catch rule violations.
+- ❌ **PyPI distribution.** Install from the clone. No `pip install kicad-jlcpcb`.
+
+---
 
 ## MCP tool surface
 
 | Stage | Tool | Purpose |
 |---|---|---|
-| Setup | `detect_kicad` | Probe `kicad-cli` version |
+| Setup | `detect_kicad` | Probe `kicad-cli` version, return install hint if missing |
 | Setup | `create_project` | Scaffold `.kicad_pro` + subdirs + session file |
-| Setup | `load_project` | Validate an existing `.kicad_pro`; surfaces resumable session state |
-| Resume | `session_resume` | Report where a prior workflow left off for a given project dir |
+| Setup | `load_project` | Validate existing `.kicad_pro`; surfaces resumable session state |
+| Resume | `session_resume` | Report where a prior workflow left off for a project dir |
 | Sourcing | `lcsc_search` | Free-text part search, basic-only by default |
 | Sourcing | `lcsc_resolve_bom` | Batch BOM resolution with cost-impact warnings |
 | Sourcing | `fetch_part_library` | Placeholder symbol/footprint fetch into project `libs/` |
@@ -119,9 +171,13 @@ First run takes ~90 s (17 MB catalog download + 12 s EasyEDA pin-map fetch per u
 | Terminal | **`easyeda_handoff`** | **Recommended terminal tool.** Produces EasyEDA import instructions |
 | Legacy | `package_for_jlcpcb` | For users routing in KiCad: export Gerbers + package a JLCPCB upload zip |
 
-## The PCB spec format
+Full input-schema definitions are in [`src/kicad_jlcpcb_mcp/server.py`](src/kicad_jlcpcb_mcp/server.py) under `_tool_definitions()`.
 
-`pcb_generate` consumes a dict with this shape:
+---
+
+## PCB spec format
+
+`pcb_generate` consumes a JSON-serializable dict:
 
 ```json
 {
@@ -137,80 +193,102 @@ First run takes ~90 s (17 MB catalog download + 12 s EasyEDA pin-map fetch per u
     }
   ],
   "nets": {
-    "3V3": [["U1", "3V3"], ["C1", "1"]],
-    "GND": [["U1", "GND"], ["C1", "2"]],
+    "3V3":     [["U1", "3V3"], ["C1", "1"]],
+    "GND":     [["U1", "GND"], ["C1", "2"]],
     "SPI_SCK": [["U1", "GPIO10"], ["U2", "SCK"]]
   }
 }
 ```
 
-Reference IC pins by **name**, not number. The plugin auto-fetches pin maps from EasyEDA for any component with an `lcsc` field, so `["U1", "GPIO10"]` resolves to the real datasheet pad number at generation time. For passives (R, C, L, D) use bare pad numbers `"1"` and `"2"`.
+Key rules:
 
-Full worked example in [`examples/soilnode-esp32/spec.json`](examples/soilnode-esp32/spec.json).
+- Reference IC pins by their **functional name** (`3V3`, `GPIO10`, `SCK`). The plugin resolves them via EasyEDA's pinmap.
+- For passives (R, C, L, D), use bare pad numbers: `"1"`, `"2"`.
+- `lib` and `fp` are KiCad-stdlib library + footprint names. See `/usr/share/kicad/footprints/` for the catalog.
+
+Full worked spec: **[`examples/soilnode-esp32/spec.json`](examples/soilnode-esp32/spec.json)**.
+
+---
 
 ## Architecture
 
 ```
 src/kicad_jlcpcb_mcp/
-  server.py            # MCP server + 13 tool definitions
-  config.py            # module-level constants
-  project.py           # .kicad_pro create/load/validate
-  session.py           # per-project session persistence
-  kicad_cli.py         # async wrapper for kicad-cli (KiCad 9 compatible)
-  sexpr.py             # s-expression reader/writer
-  schematic.py         # netlist spec → .kicad_sch
-  lcsc_client.py       # jlcparts mirror + SQLite cache + basic-tier filter
-  part_library.py      # EasyEDA client: rate-limited pin maps + symbol/footprint gen
-                       #   - EasyEdaRateLimiter class enforces the 12s cooldown
-                       #   - SQLite cache indefinitely persists pin maps
-  pcb.py               # pcbnew-based .kicad_pcb generator
-  gerber_pack.py       # KiCad 8/9 Protel extension normalizer + JLCPCB zip
+  server.py         ← MCP server + 13 tool definitions
+  session.py        ← per-project state (.kicad_jlcpcb_session.json)
+  project.py        ← .kicad_pro create / load / validate
+  kicad_cli.py      ← async wrapper for kicad-cli (KiCad 8/9)
+  lcsc_client.py    ← jlcparts mirror + SQLite cache + basic-tier filter
+  part_library.py   ← EasyEDA client (EasyEdaRateLimiter + pin-map cache)
+  pcb.py            ← pcbnew-based .kicad_pcb generator
+  schematic.py      ← netlist spec → .kicad_sch
+  gerber_pack.py    ← KiCad 8/9 Protel extension normalizer + JLCPCB zip
+  sexpr.py          ← s-expression reader/writer
+  config.py         ← module-level constants
 ```
 
-All HTTP goes through `lcsc_client` and `part_library`. All KiCad CLI calls go through `kicad_cli`. PCB construction via `pcbnew.BOARD()` and friends — no `import pcbnew` at module level (lazy-imported in `pcb.py` so the rest of the plugin runs when KiCad isn't installed).
+All HTTP goes through `lcsc_client` and `part_library`. All KiCad CLI invocations go through `kicad_cli`. `pcbnew` is lazy-imported inside `pcb.py` so the rest of the plugin runs fine when KiCad isn't installed (most tools don't need it).
+
+---
 
 ## Testing
 
 ```bash
-PYTHONPATH=src pytest tests/
+PYTHONPATH=src pytest tests/           # 212 tests (6 skipped without KiCad)
 ```
 
-With KiCad installed:
+With KiCad's `pcbnew` bindings available:
 
 ```bash
-KICAD_INSTALLED=1 PYTHONPATH=src pytest tests/ -v
+KICAD_INSTALLED=1 PYTHONPATH=src pytest tests/ -v   # runs integration suite too
 ```
 
-**212 tests** covering subprocess wrapping, HTTP client, SQLite cache, s-expression round-trip, schematic generation, Gerber renaming, EasyEDA pin-map parsing, rate-limit + retry path, session persistence, MCP server routing, and real `pcbnew` board generation (gated by `KICAD_INSTALLED=1`).
+Coverage spans subprocess wrapping, HTTP mocking, SQLite cache, s-expression round-trip, schematic emission, Gerber renaming, EasyEDA pin-map parsing, rate-limit / retry, session persistence, MCP tool routing, and real `pcbnew` board generation.
+
+Lint:
+
+```bash
+ruff check .
+ruff format --check .
+```
+
+---
 
 ## Troubleshooting
 
-Common problems and resolutions: [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
+Full guide: **[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)**. Most common issues:
 
-Highlights:
+| Symptom | Fix |
+|---|---|
+| `kicad-jlcpcb` command not found | `pip install -e .` from the clone, restart Claude Code |
+| `ImportError: No module named pcbnew` | Install KiCad; don't try to `pip install pcbnew` (it ships with KiCad) |
+| First run stalls ~12 s per IC | Expected — EasyEDA rate limit. Cached forever after first fetch. |
+| `Footprint not found` | Check `/usr/share/kicad/footprints/<lib>.pretty/` for the exact name |
+| `/pcb-new` offers to resume when you wanted a clean start | Delete `.kicad_jlcpcb_session.json` or pick a new project name |
 
-- **`kicad-jlcpcb` command not found** → `pip install -e .` from the cloned directory.
-- **First run stalls 12 s** → EasyEDA rate limit; expected, caches forever.
-- **`Footprint not found`** → look up the exact name under `/usr/share/kicad/footprints/`.
-- **Session offers to resume when you want a fresh board** → delete `.kicad_jlcpcb_session.json` or pick a new project name.
+---
 
-## Known limitations
+## Design rationale (Phase 1.6)
 
-- **Headless auto-routing is not in scope.** Freerouting 2.1.0 can't route real RF boards via its CLI reliably. The plugin delegates routing to EasyEDA's cloud auto-router, which works.
-- **Pin-map fetches are rate-limited.** First run of `pcb_generate` on fresh ICs pauses ~12 s per unique IC (EasyEDA anti-bot). Cached forever after first fetch.
-- **EasyEDA library coverage isn't universal.** Some LCSC parts don't have symbol data in EasyEDA. Provide an explicit `"pinmap"` field in the component spec for those.
-- **KiCad stdlib footprint naming varies.** If an IC's footprint isn't in the skill's reference table, `ls /usr/share/kicad/footprints/<Library>.pretty/` and pick the closest match.
-- **Auto-placement is a three-band grid.** Connectors on top, ICs in the middle, passives below. You'll rearrange things in EasyEDA before routing. The plugin's job is connectivity, not aesthetics.
+Earlier releases tried to route the board headlessly with Freerouting and produce a JLCPCB Gerber zip directly. That didn't work for real boards — Freerouting 2.1.0 has CLI bugs, can't route RF matching networks, and won't save partial results.
+
+Phase 1.6 takes the pragmatic win: **the plugin wires everything up, EasyEDA routes and orders.** The tradeoff is opening a browser tab and clicking two buttons; in exchange you get reliability the open-source tooling can't match and a one-click path to a JLCPCB order.
+
+---
 
 ## Roadmap
 
 - **Phase 2** — auto-placement that respects functional groupings (power domain, RF block, analog front-end), DRC integration, differential-pair awareness.
-- **Phase 3** — vision-based schematic extraction (drop in a photo of a hand-drawn schematic, out comes a wired `.kicad_pcb`).
+- **Phase 3** — vision-based schematic extraction: drop in a photo of a hand-drawn schematic, out comes a wired `.kicad_pcb`.
+
+---
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, test running, and PR conventions. All contributors follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+See **[`CONTRIBUTING.md`](CONTRIBUTING.md)** for dev setup, test running, and PR conventions. All contributors follow the [Code of Conduct](CODE_OF_CONDUCT.md). Bug reports: [open an issue](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/issues).
+
+---
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT — see **[`LICENSE`](LICENSE)**.
