@@ -6,6 +6,7 @@ without KiCad.
 """
 
 import os
+import sys
 
 import pytest
 
@@ -64,7 +65,10 @@ class TestDetectKicad:
         result = await detect_kicad()
         assert result["found"] is False
         assert result["meets_min"] is False
-        assert "Fedora" in result["install_hint"]
+        # Platform-specific wording; assert the shape, not one distro.
+        assert "kicad.org" in result["install_hint"] or "install kicad" in (
+            result["install_hint"].lower()
+        )
         assert result["min_required"] == "8.0"
 
     @pytest.mark.asyncio
@@ -94,7 +98,10 @@ class TestDetectKicad:
         assert result["found"] is True
         assert result["version"] == "7.0.10"
         assert result["meets_min"] is False
-        assert "Fedora" in result["install_hint"]
+        # Platform-specific wording; assert the shape, not one distro.
+        assert "kicad.org" in result["install_hint"] or "install kicad" in (
+            result["install_hint"].lower()
+        )
 
     @pytest.mark.asyncio
     async def test_unparseable_version(self, monkeypatch):
@@ -185,12 +192,22 @@ class TestCrossPlatformDiscovery:
         monkeypatch.setattr(config, "KICAD_CLI_FALLBACK_PATHS", (str(fake),))
         assert kicad_cli._find_executable() == str(fake)
 
+    @pytest.mark.skipif(
+        sys.platform.startswith("win"),
+        reason="Windows has no execute bit; os.access(X_OK) is true for any file",
+    )
     def test_ignores_a_fallback_path_that_is_not_executable(self, tmp_path, monkeypatch):
         fake = tmp_path / "kicad-cli"
         fake.write_text("not executable")
         fake.chmod(0o644)
         monkeypatch.setattr(kicad_cli.shutil, "which", lambda _: None)
         monkeypatch.setattr(config, "KICAD_CLI_FALLBACK_PATHS", (str(fake),))
+        monkeypatch.setattr(kicad_cli, "_find_flatpak_argv", lambda: None)
+        assert kicad_cli._find_executable() is None
+
+    def test_ignores_a_fallback_path_that_does_not_exist(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(kicad_cli.shutil, "which", lambda _: None)
+        monkeypatch.setattr(config, "KICAD_CLI_FALLBACK_PATHS", (str(tmp_path / "nope"),))
         monkeypatch.setattr(kicad_cli, "_find_flatpak_argv", lambda: None)
         assert kicad_cli._find_executable() is None
 

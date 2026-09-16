@@ -1,6 +1,7 @@
 """Tests for per-project session persistence."""
 
 import json
+from pathlib import Path
 
 from kicad_jlcpcb_mcp.session import (
     SESSION_FILENAME,
@@ -30,7 +31,8 @@ class TestNewSession:
         monkeypatch.chdir(tmp_path)
         sess = new_session(".", "demo")
         # Path should be absolute after resolve()
-        assert sess["project_path"].startswith("/")
+        # Absolute, but a Windows path starts with a drive letter, not "/".
+        assert Path(sess["project_path"]).is_absolute()
 
 
 class TestSaveAndLoad:
