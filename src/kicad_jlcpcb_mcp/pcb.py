@@ -253,6 +253,13 @@ def _classify(ref: str) -> str:
     return best_class
 
 
+def _band_rows(count: int, spacing: float, usable_width: float) -> tuple[int, int]:
+    """Columns and rows needed to lay `count` parts out at `spacing`."""
+    cols = max(1, int(usable_width // spacing) if spacing > 0 else 1)
+    rows = max(1, -(-count // cols))  # ceil
+    return cols, rows
+
+
 def _place(
     components: list[dict],
     *,
@@ -262,52 +269,84 @@ def _place(
     passive_spacing: float = PASSIVE_SPACING_MM_DEFAULT,
     conn_spacing: float = CONN_SPACING_MM_DEFAULT,
     origin: float = GRID_ORIGIN_MM_DEFAULT,
-) -> dict[str, tuple[float, float]]:
-    """Three-band layout: connectors on top, ICs in middle, passives below."""
+) -> tuple[dict[str, tuple[float, float]], list[str]]:
+    """Three-band layout: connectors on top, ICs in the middle, passives below.
+
+    Returns (positions, warnings).
+
+    Bands are sized from the board, not from fixed offsets. The earlier
+    version advanced Y by hardcoded amounts — 16 mm after the connector band,
+    14 mm after the IC band — and never checked the result against the board
+    height, so on a 40 x 30 mm board the first passive landed at y=40, below
+    the bottom edge. Every part on a small board ended up outside the
+    outline, which is precisely the size of board this plugin is for.
+
+    Spacing is also compressed to fit rather than left to overflow: a grid
+    that runs off the board is worse than a tight one, because JLCPCB rejects
+    footprints outside Edge.Cuts.
+    """
     positions: dict[str, tuple[float, float]] = {}
+    warnings: list[str] = []
+
     by_class: dict[str, list[dict]] = {"conn": [], "ic": [], "passive": []}
     for c in components:
         by_class[_classify(c["ref"])].append(c)
 
-    # Band 1: connectors
-    x, y = origin, origin
-    for c in by_class["conn"]:
-        positions[c["ref"]] = (x, y)
-        x += conn_spacing
-        if x > board_width_mm - origin:
-            x = origin
-            y += conn_spacing
+    margin = min(origin, board_width_mm / 8.0, board_height_mm / 8.0)
+    usable_w = max(board_width_mm - 2 * margin, 1.0)
+    usable_h = max(board_height_mm - 2 * margin, 1.0)
 
-    # Band 2: ICs
-    y += 16.0
-    x = origin
-    for c in by_class["ic"]:
-        positions[c["ref"]] = (x, y)
-        x += ic_spacing
-        if x > board_width_mm - origin:
-            x = origin
-            y += ic_spacing
+    bands = [
+        ("conn", conn_spacing),
+        ("ic", ic_spacing),
+        ("passive", passive_spacing),
+    ]
+    active = [(name, sp) for name, sp in bands if by_class[name]]
+    if not active:
+        return positions, warnings
 
-    # Band 3: passives
-    y += 14.0
-    x = origin
-    max_cols = max(1, int((board_width_mm - 2 * origin) / passive_spacing))
-    col = 0
-    for c in by_class["passive"]:
-        positions[c["ref"]] = (x, y)
-        col += 1
-        x += passive_spacing
-        if col >= max_cols:
-            col = 0
-            x = origin
-            y += passive_spacing
+    # Give each band height in proportion to the rows it needs, so a board
+    # that is mostly passives does not reserve a third of itself for one IC.
+    demand = []
+    for name, spacing in active:
+        _, rows = _band_rows(len(by_class[name]), spacing, usable_w)
+        demand.append(max(rows, 1))
+    total_rows = sum(demand)
 
-    return positions
+    y_cursor = margin
+    for (name, spacing), rows_needed in zip(active, demand):
+        band_h = usable_h * (rows_needed / total_rows)
+        parts = by_class[name]
+        cols, rows = _band_rows(len(parts), spacing, usable_w)
 
+        # Compress to fit the band rather than running past it.
+        row_pitch = min(spacing, band_h / rows) if rows else spacing
+        col_pitch = min(spacing, usable_w / cols) if cols else spacing
 
-# ---------------------------------------------------------------------------
-# pcbnew board construction
-# ---------------------------------------------------------------------------
+        for i, c in enumerate(parts):
+            col, row = i % cols, i // cols
+            positions[c["ref"]] = (
+                margin + col * col_pitch,
+                y_cursor + row * row_pitch,
+            )
+        y_cursor += band_h
+
+    # Whatever is still outside gets reported. Silence here means a board
+    # that looks fine and gets rejected at review.
+    outside = sorted(
+        ref
+        for ref, (x, y) in positions.items()
+        if x < 0 or y < 0 or x > board_width_mm or y > board_height_mm
+    )
+    if outside:
+        warnings.append(
+            f"{len(outside)} component(s) could not be placed inside the "
+            f"{board_width_mm:g}x{board_height_mm:g} mm outline "
+            f"({', '.join(outside[:8])}{' ...' if len(outside) > 8 else ''}). "
+            f"Increase the board size or reduce the part count — JLCPCB "
+            f"rejects footprints outside Edge.Cuts."
+        )
+    return positions, warnings
 
 
 def _mm(pcb, x: float) -> int:
@@ -502,11 +541,12 @@ async def generate_pcb(
 
     _add_board_outline(pcb, board, board_cfg["width_mm"], board_cfg["height_mm"])
 
-    positions = _place(
+    positions, placement_warnings = _place(
         components,
         board_width_mm=board_cfg["width_mm"],
         board_height_mm=board_cfg["height_mm"],
     )
+    warnings.extend(placement_warnings)
 
     fp_by_ref: dict[str, Any] = {}
     comp_by_ref: dict[str, dict] = {}

@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-16
+
+### Fixed
+- **Components were placed outside the board outline on small boards.**
+  Placement advanced Y by fixed amounts — 16 mm after the connector band,
+  14 mm after the IC band — and never checked the result against the board
+  height. On a 40 x 30 mm board the first passive landed at y=40, below the
+  bottom edge; a 30-passive board put **all thirty parts off the board**,
+  with Y running to 138 mm. Small boards are exactly what this plugin is for,
+  and JLCPCB rejects footprints outside Edge.Cuts.
+
+  Bands are now sized from the board rather than from constants, spacing is
+  compressed to fit instead of overflowing, and anything that still does not
+  fit is reported rather than silently written out of bounds. Verified
+  through `pcbnew`: 20 parts on a 40 x 30 mm board, none outside the outline.
+
 ## [0.11.0] - 2026-09-16
 
 ### Fixed
@@ -417,7 +433,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.12.0
 [0.11.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.11.0
 [0.10.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.10.0
 [0.9.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.9.0

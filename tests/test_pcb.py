@@ -175,7 +175,7 @@ class TestPlace:
                 "fp": "USB_C_Receptacle_HRO_TYPE-C-31-M-12",
             }
         )
-        positions = _place(
+        positions, _ = _place(
             spec["components"],
             board_width_mm=100.0,
             board_height_mm=80.0,
@@ -187,7 +187,7 @@ class TestPlace:
         assert positions["U1"][1] < positions["R1"][1]
 
     def test_every_component_gets_position(self):
-        positions = _place(
+        positions, _ = _place(
             minimal_spec()["components"],
             board_width_mm=40.0,
             board_height_mm=30.0,
@@ -507,3 +507,53 @@ class TestRefdesClassification:
     def test_case_insensitive(self):
         assert _classify("u1") == "ic"
         assert _classify("usb1") == "conn"
+
+
+class TestPlacementStaysOnTheBoard:
+    """Placement used fixed band offsets — +16 mm after connectors, +14 mm
+    after ICs — and never checked the result against the board height. On a
+    40 x 30 mm board the first passive landed at y=40, below the bottom
+    edge, and all 30 parts of a 30-passive board ended up outside the
+    outline. That is exactly the size of board this plugin is for, and
+    JLCPCB rejects footprints outside Edge.Cuts.
+    """
+
+    def _inside(self, positions, w, h):
+        return [ref for ref, (x, y) in positions.items() if x < 0 or y < 0 or x > w or y > h]
+
+    @pytest.mark.parametrize(
+        "count,w,h",
+        [(30, 40, 30), (100, 30, 30), (2, 20, 20), (13, 80, 60), (1, 10, 10)],
+    )
+    def test_everything_lands_inside_the_outline(self, count, w, h):
+        comps = [{"ref": f"R{i}"} for i in range(count)]
+        positions, warnings = _place(comps, board_width_mm=w, board_height_mm=h)
+        assert self._inside(positions, w, h) == []
+        assert warnings == []
+
+    def test_the_small_board_regression(self):
+        """30 passives on 40x30 used to put every single part off the board."""
+        comps = [{"ref": f"R{i}"} for i in range(30)]
+        positions, _ = _place(comps, board_width_mm=40, board_height_mm=30)
+        assert max(y for _, y in positions.values()) <= 30
+
+    def test_bands_keep_their_order(self):
+        comps = [{"ref": "J1"}, {"ref": "U1"}, {"ref": "R1"}]
+        positions, _ = _place(comps, board_width_mm=80, board_height_mm=60)
+        assert positions["J1"][1] < positions["U1"][1] < positions["R1"][1]
+
+    def test_a_board_of_only_passives_uses_the_whole_height(self):
+        """An absent band should not reserve space for itself."""
+        comps = [{"ref": f"C{i}"} for i in range(12)]
+        positions, _ = _place(comps, board_width_mm=40, board_height_mm=40)
+        assert min(y for _, y in positions.values()) < 10
+
+    def test_every_component_is_placed(self):
+        comps = [{"ref": f"R{i}"} for i in range(50)]
+        positions, _ = _place(comps, board_width_mm=50, board_height_mm=50)
+        assert len(positions) == 50
+
+    def test_no_two_components_share_a_position(self):
+        comps = [{"ref": f"R{i}"} for i in range(20)]
+        positions, _ = _place(comps, board_width_mm=60, board_height_mm=40)
+        assert len(set(positions.values())) == len(positions)
