@@ -6,13 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-16
+
 ### Fixed
+- **`pcb_generate` could not place a footprint on macOS or Windows.** The
+  footprint library path was the hardcoded string
+  `/usr/share/kicad/footprints`, so board generation failed everywhere else
+  — including for users whose KiCad v0.4.0 had just taught `detect_kicad` to
+  find. The directory is now resolved at call time from `KJLC_FOOTPRINT_DIR`,
+  then KiCad's own `KICAD{10,9,8}_FOOTPRINT_DIR` (the variables its
+  `fp-lib-table` expands), then the standard locations for Linux, macOS,
+  Windows and Flatpak. `pcb_generate` also accepts `lib_dir` for a one-off.
 - The `mcp<2` bound was enforced only by a comment. A Dependabot PR widening
   it to `<3` passed CI against mcp 2.2.0 while the server was unstartable,
   because no test constructed the server — every other test calls
   `_tool_definitions()` and `_handle_tool` directly.
   `TestServerActuallyConstructs` now builds the server and asserts the
   low-level `Server` API we depend on is present.
+- `Footprint not found` errors now say how many libraries were actually
+  present and suggest near matches, instead of only naming the path.
+
+### Changed
+- **Pin-map fetches are skipped when they cannot help.** EasyEDA is limited
+  to one request per 12 seconds, and every component carrying an LCSC number
+  was fetched — including passives wired as `("C1", "1")`, whose pads are
+  already numbers. Only refs whose nets reference a pin by *name* are
+  fetched now. On the shipped example that is 3 requests instead of 13:
+  **156 seconds of waiting down to 36.**
+- Docs no longer assume the Linux footprint path or quote a per-IC stall
+  that no longer reflects what the plugin does.
 
 ## [0.4.0] - 2026-09-16
 
@@ -221,7 +243,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.5.0
 [0.4.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.4.0
 [0.3.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.3.0
 [0.2.1]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.2.1

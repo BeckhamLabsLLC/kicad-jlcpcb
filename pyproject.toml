@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kicad-jlcpcb"
-version = "0.4.0"
+version = "0.5.0"
 description = "MCP server that generates JLCPCB-ready KiCad PCB projects from descriptions, BOMs, or existing KiCad projects"
 readme = "README.md"
 requires-python = ">=3.10"

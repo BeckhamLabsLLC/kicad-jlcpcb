@@ -37,6 +37,44 @@ KICAD_CLI_FALLBACK_PATHS = (
 KICAD_FLATPAK_ID = "org.kicad.KiCad"
 
 # ---------------------------------------------------------------------------
+# KiCad footprint libraries
+# ---------------------------------------------------------------------------
+
+# Where KiCad's stock .pretty footprint libraries live. Resolved at call
+# time by pcb.resolve_footprint_dir(), in this order:
+#
+#   1. KJLC_FOOTPRINT_DIR              — this plugin's override
+#   2. KICAD{10,9,8}_FOOTPRINT_DIR     — KiCad's own convention, the same
+#      variables its fp-lib-table entries expand
+#   3. the candidates below
+#
+# Hardcoding the Linux path meant pcb_generate could not place a single
+# footprint on macOS or Windows, even once kicad-cli was found there.
+FOOTPRINT_DIR_ENV_VARS = (
+    "KJLC_FOOTPRINT_DIR",
+    "KICAD10_FOOTPRINT_DIR",
+    "KICAD9_FOOTPRINT_DIR",
+    "KICAD8_FOOTPRINT_DIR",
+    "KICAD_FOOTPRINT_DIR",
+)
+
+FOOTPRINT_DIR_CANDIDATES = (
+    # Linux distro packages
+    "/usr/share/kicad/footprints",
+    "/usr/local/share/kicad/footprints",
+    # Flatpak
+    "/var/lib/flatpak/app/org.kicad.KiCad/current/active/files/share/kicad/footprints",
+    "~/.local/share/flatpak/app/org.kicad.KiCad/current/active/files/share/kicad/footprints",
+    # macOS app bundle
+    "/Applications/KiCad/KiCad.app/Contents/SharedSupport/footprints",
+    "~/Applications/KiCad/KiCad.app/Contents/SharedSupport/footprints",
+    # Windows
+    "C:/Program Files/KiCad/10.0/share/kicad/footprints",
+    "C:/Program Files/KiCad/9.0/share/kicad/footprints",
+    "C:/Program Files/KiCad/8.0/share/kicad/footprints",
+)
+
+# ---------------------------------------------------------------------------
 # Cache and workspace
 # ---------------------------------------------------------------------------
 

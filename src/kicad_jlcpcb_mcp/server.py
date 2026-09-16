@@ -184,6 +184,7 @@ class KicadJlcpcbServer:
                 output_path,
                 auto_fetch_pinmaps=args.get("auto_fetch_pinmaps", True),
                 force_refresh=args.get("force_refresh", False),
+                lib_dir=args.get("lib_dir"),
             )
             if self._active_project:
                 session_mod.update_stage(
@@ -630,6 +631,15 @@ def _tool_definitions() -> list[Tool]:
                             "Bypass cached pin maps and refetch from EasyEDA. Slow "
                             "(rate-limited to one request per 12s); use only when a "
                             "cached map is known to be wrong."
+                        ),
+                    },
+                    "lib_dir": {
+                        "type": "string",
+                        "description": (
+                            "Directory holding KiCad's stock .pretty footprint "
+                            "libraries. Normally omit it — the plugin finds KiCad's "
+                            "libraries on Linux, macOS, Windows and Flatpak, and "
+                            "honours KJLC_FOOTPRINT_DIR / KICAD*_FOOTPRINT_DIR."
                         ),
                     },
                 },

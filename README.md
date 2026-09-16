@@ -187,7 +187,7 @@ Claude walks you through:
 3. Decomposes the description into ~12 generic part specs
 4. `lcsc_search` per spec (live catalog query, cached locally for 24 h)
 5. **BOM checkpoint** — shows every resolved part, flags extended-tier ones with cost warnings, and waits for your confirmation
-6. `pcb_generate` — fetches EasyEDA pin maps (~12 s per unique IC, first run only), places footprints, wires nets, saves `.kicad_pcb`
+6. `pcb_generate` — fetches EasyEDA pin maps (~12 s each, only for parts whose nets reference pins by *name*, first run only), places footprints, wires nets, saves `.kicad_pcb`
 7. `easyeda_handoff` — prints the import instructions
 
 The full trace with real timings and tool outputs: **[`examples/soilnode-esp32/walkthrough.md`](examples/soilnode-esp32/walkthrough.md)**.
@@ -258,7 +258,7 @@ Key rules:
 
 - Reference IC pins by their **functional name** (`3V3`, `GPIO10`, `SCK`). The plugin resolves them via EasyEDA's pinmap.
 - For passives (R, C, L, D), use bare pad numbers: `"1"`, `"2"`.
-- `lib` and `fp` are KiCad-stdlib library + footprint names. See `/usr/share/kicad/footprints/` for the catalog.
+- `lib` and `fp` are KiCad-stdlib library + footprint names. The plugin finds KiCad's footprint directory automatically on Linux, macOS, Windows and Flatpak; override with `KJLC_FOOTPRINT_DIR` or `pcb_generate`'s `lib_dir`.
 
 Full worked spec: **[`examples/soilnode-esp32/spec.json`](examples/soilnode-esp32/spec.json)**.
 
@@ -328,8 +328,8 @@ Full guide: **[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)**. Most common issues:
 |---|---|
 | `kicad-jlcpcb` command not found | `pip install -e .` from the clone, restart Claude Code |
 | `ImportError: No module named pcbnew` | Install KiCad; don't try to `pip install pcbnew` (it ships with KiCad) |
-| First run stalls ~12 s per IC | Expected — EasyEDA rate limit. Cached forever after first fetch. |
-| `Footprint not found` | Check `/usr/share/kicad/footprints/<lib>.pretty/` for the exact name |
+| First run stalls ~12 s per part | Expected — EasyEDA rate limit, and only for parts whose nets use pin *names*. Cached forever after the first fetch. |
+| `Footprint not found` | The error names how many libraries were found and suggests near matches. If none were found, set `KJLC_FOOTPRINT_DIR`. |
 | `/pcb-new` offers to resume when you wanted a clean start | Delete `.kicad_jlcpcb_session.json` or pick a new project name |
 
 ---

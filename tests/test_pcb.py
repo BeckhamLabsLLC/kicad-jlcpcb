@@ -6,17 +6,21 @@ is set in the environment, matching the pattern used by test_kicad_cli.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 
-from kicad_jlcpcb_mcp import pcb
+from kicad_jlcpcb_mcp import config, part_library, pcb
 from kicad_jlcpcb_mcp.pcb import (
     PcbGenerationError,
     _classify,
     _place,
+    _refs_needing_pin_names,
+    _resolve_pinmaps,
     _validate_spec,
     bom_from_components,
     generate_pcb,
+    resolve_footprint_dir,
 )
 
 # ---------------------------------------------------------------------------
@@ -345,3 +349,124 @@ class TestGeneratePcbWithoutPcbnew:
                 sys.modules["pcbnew"] = saved
             else:
                 sys.modules.pop("pcbnew", None)
+
+
+class TestFootprintDirResolution:
+    """`pcb_generate` used to hardcode "/usr/share/kicad/footprints", so it
+    could not place a single footprint on macOS or Windows — including for
+    users whose KiCad `detect_kicad` had just found successfully."""
+
+    def test_explicit_path_wins(self, tmp_path):
+        assert resolve_footprint_dir(str(tmp_path)) == str(tmp_path)
+
+    def test_explicit_path_that_does_not_exist_is_rejected(self):
+        assert resolve_footprint_dir("/definitely/not/here") is None
+
+    def test_plugin_env_override(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("KJLC_FOOTPRINT_DIR", str(tmp_path))
+        assert resolve_footprint_dir() == str(tmp_path)
+
+    def test_honours_kicads_own_env_convention(self, tmp_path, monkeypatch):
+        """These are the same variables KiCad's fp-lib-table entries expand."""
+        monkeypatch.delenv("KJLC_FOOTPRINT_DIR", raising=False)
+        monkeypatch.setenv("KICAD9_FOOTPRINT_DIR", str(tmp_path))
+        assert resolve_footprint_dir() == str(tmp_path)
+
+    def test_falls_back_to_platform_candidates(self, tmp_path, monkeypatch):
+        for var in config.FOOTPRINT_DIR_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(config, "FOOTPRINT_DIR_CANDIDATES", ("/nope", str(tmp_path)))
+        assert resolve_footprint_dir() == str(tmp_path)
+
+    def test_returns_none_when_nothing_is_found(self, monkeypatch):
+        for var in config.FOOTPRINT_DIR_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(config, "FOOTPRINT_DIR_CANDIDATES", ("/nope", "/also/nope"))
+        assert resolve_footprint_dir() is None
+
+    def test_candidates_cover_every_platform_the_readme_claims(self):
+        joined = " ".join(config.FOOTPRINT_DIR_CANDIDATES)
+        assert "/usr/share/kicad" in joined, "Linux"
+        assert "KiCad.app" in joined, "macOS"
+        assert "Program Files" in joined, "Windows"
+        assert "flatpak" in joined, "Flatpak"
+
+    @pytest.mark.asyncio
+    async def test_generate_pcb_explains_itself_when_no_library_exists(self, tmp_path, monkeypatch):
+        """The failure must name the override, not just say 'not found'."""
+        for var in config.FOOTPRINT_DIR_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(config, "FOOTPRINT_DIR_CANDIDATES", ("/nope",))
+        monkeypatch.setattr(pcb, "_ensure_pcbnew", lambda: object())
+        with pytest.raises(PcbGenerationError, match="KJLC_FOOTPRINT_DIR"):
+            await generate_pcb(minimal_spec(), tmp_path / "b.kicad_pcb")
+
+
+class TestPinMapFetchIsSkippedWhenUseless:
+    """EasyEDA is rate-limited to one request per 12 seconds, and the old
+    code fetched a pin map for every component carrying an LCSC number.
+    A decoupling cap wired as ("C1", "1") needs nothing fetched — its pads
+    are already numbers. On the shipped example that was 13 requests where
+    3 would do: 156 seconds of waiting reduced to 36."""
+
+    def test_named_pins_require_a_fetch(self):
+        nets = {"VCC": [("U1", "VIN"), ("C1", "1")]}
+        assert _refs_needing_pin_names(nets) == {"U1"}
+
+    def test_numeric_pads_require_nothing(self):
+        nets = {"GND": [("C1", "2"), ("R1", "2")]}
+        assert _refs_needing_pin_names(nets) == set()
+
+    def test_a_ref_is_flagged_if_any_net_names_a_pin(self):
+        nets = {
+            "GND": [("U1", "2")],
+            "VCC": [("U1", "VIN")],
+        }
+        assert _refs_needing_pin_names(nets) == {"U1"}
+
+    def test_empty_nets(self):
+        assert _refs_needing_pin_names({}) == set()
+
+    @pytest.mark.asyncio
+    async def test_resolver_does_not_call_easyeda_for_skipped_refs(self, monkeypatch):
+        calls: list[str] = []
+
+        async def spy(lcsc, **kwargs):
+            calls.append(lcsc)
+            return {"pinmap": {"VIN": "1"}}
+
+        monkeypatch.setattr(part_library, "get_pin_map", spy)
+        components = [
+            {"ref": "U1", "lcsc": "C82942"},
+            {"ref": "C1", "lcsc": "C1525"},
+        ]
+        maps, warnings = await _resolve_pinmaps(
+            components, auto_fetch=True, force_refresh=False, needed_refs={"U1"}
+        )
+        assert calls == ["C82942"], "should not have fetched for the numeric-pad part"
+        assert maps["C1"] == {}
+        assert maps["U1"] == {"VIN": "1"}
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_pinmap_still_wins(self, monkeypatch):
+        async def boom(lcsc, **kwargs):
+            raise AssertionError("must not fetch when a pinmap was supplied")
+
+        monkeypatch.setattr(part_library, "get_pin_map", boom)
+        maps, _ = await _resolve_pinmaps(
+            [{"ref": "U1", "lcsc": "C1", "pinmap": {"A": "1"}}],
+            auto_fetch=True,
+            force_refresh=False,
+            needed_refs={"U1"},
+        )
+        assert maps["U1"] == {"A": "1"}
+
+    def test_the_shipped_example_benefits(self):
+        """Guard the real-world win, not just the unit behaviour."""
+        import json
+
+        spec = json.loads(Path("examples/soilnode-esp32/spec.json").read_text())
+        nets = {n: [(m[0], m[1]) for m in ms] for n, ms in spec["nets"].items()}
+        needed = _refs_needing_pin_names(nets)
+        with_lcsc = [c for c in spec["components"] if c.get("lcsc") and not c.get("pinmap")]
+        assert len(needed) < len(with_lcsc) / 2, "most parts should not need a fetch"

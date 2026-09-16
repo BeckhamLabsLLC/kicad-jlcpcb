@@ -147,14 +147,31 @@ The anti-bot system triggered despite our throttling. The plugin waits 60 s and 
 
 ## PCB generation (`pcb_generate`)
 
-### `Footprint not found: LibraryName:FootprintName`
+### `Footprint library not found` / `Footprint not found`
 
-The `lib` / `fp` fields in your component spec don't match anything in `/usr/share/kicad/footprints/`. Look up the exact name:
+The `lib` / `fp` fields in your component spec don't match KiCad's stock
+libraries. The error says how many libraries were found and suggests near
+matches; look up the exact name with:
 
 ```bash
-ls /usr/share/kicad/footprints/RF_Module.pretty/ | head
+# Linux
 ls /usr/share/kicad/footprints/Resistor_SMD.pretty/ | grep 0603
+# macOS
+ls "/Applications/KiCad/KiCad.app/Contents/SharedSupport/footprints/Resistor_SMD.pretty/" | grep 0603
 ```
+
+### `KiCad's footprint libraries could not be found`
+
+The plugin probes `KJLC_FOOTPRINT_DIR`, then KiCad's own
+`KICAD{10,9,8}_FOOTPRINT_DIR`, then the standard install locations for
+Linux, macOS, Windows and Flatpak. If none hit, point it at the directory
+containing the `.pretty` folders:
+
+```bash
+export KJLC_FOOTPRINT_DIR=/path/to/kicad/footprints
+```
+
+Or pass `lib_dir` to `pcb_generate` for a one-off.
 
 Common correct names:
 
@@ -231,6 +248,20 @@ python -c "import importlib.metadata as m; print(m.version('mcp'))"   # expect 1
 You are on an old `.mcp.json` that invoked a bare `kicad-jlcpcb` command.
 Pull the latest — it now launches `python3 -m kicad_jlcpcb_mcp` with
 `PYTHONPATH` set to the plugin root, so nothing needs to be on `PATH`.
+
+---
+
+### `pcb_generate` seems to hang
+
+It is fetching EasyEDA pin maps, which are rate-limited to one request per
+12 seconds. Only parts whose nets reference pins by *name* need one —
+anything wired by pad number is skipped, so a board of mostly passives
+finishes far quicker than its part count suggests. The shipped example
+needs 3 fetches for 13 parts.
+
+Results are cached indefinitely, so the second run on the same parts is
+instant. To avoid the wait entirely, pass `auto_fetch_pinmaps: false` and
+reference pads by number.
 
 ---
 

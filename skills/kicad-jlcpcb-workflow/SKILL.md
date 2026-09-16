@@ -110,7 +110,7 @@ Now you know the LDO uses `VIN/VSS/VOUT` not `VCC/GND/VOUT`, and you can write n
 
 ## KiCad stdlib footprint reference
 
-The plugin loads footprints from `/usr/share/kicad/footprints/<lib>.pretty/<fp>.kicad_mod`. Common picks:
+The plugin loads footprints from KiCad's stock libraries, `<footprint-dir>/<lib>.pretty/<fp>.kicad_mod`. It finds that directory itself on Linux, macOS, Windows and Flatpak. Common picks:
 
 | Component | lib | fp |
 |---|---|---|
@@ -129,7 +129,7 @@ The plugin loads footprints from `/usr/share/kicad/footprints/<lib>.pretty/<fp>.
 | 0603 LED | `LED_SMD` | `LED_0603_1608Metric` |
 | Tactile switch SMD | `Button_Switch_SMD` | `SW_SPST_TL3342` (4 copper pads, 2 nets: pad "1" + pad "2") |
 
-If the user asks for a part you don't have in this reference, search `/usr/share/kicad/footprints/` directly via Bash (e.g. `ls /usr/share/kicad/footprints/Package_DFN_QFN.pretty/ | grep DFN-8`) and pick the closest match by dimensions.
+If the user asks for a part not in this reference, list the footprint directory via Bash and pick the closest match by dimensions (on Linux that is usually `/usr/share/kicad/footprints/`; on macOS `/Applications/KiCad/KiCad.app/Contents/SharedSupport/footprints/`). A wrong `lib`/`fp` produces an error naming near matches, so guessing once is cheap.
 
 ## Common IC pinouts the user should double-check
 
@@ -144,9 +144,9 @@ The EasyEDA pin-name extraction is accurate but uses datasheet nomenclature, whi
 - **`lcsc_resolve_bom` unresolved rows** — show and ask for substitutions.
 - **`part_pin_map` raises "no component data"** — that LCSC number isn't in EasyEDA's library. You'll need to hardcode the pinmap in the component spec (provide a `"pinmap": {...}` field).
 - **`pcb_generate` errors list non-empty** — check each error:
-  - `"X: Footprint not found"` — wrong `lib`/`fp` name, look in `/usr/share/kicad/footprints/`
+  - `"X: Footprint not found"` — wrong `lib`/`fp` name. The error lists near matches; if it says no libraries were found at all, KiCad's footprints are somewhere unusual and `KJLC_FOOTPRINT_DIR` needs setting.
   - `"net X: Y has no pad Z"` — pin name doesn't match EasyEDA's data, call `part_pin_map` and fix
-- **EasyEDA rate-limited warning in logs** — first run of `pcb_generate` on fresh ICs can pause up to ~12 seconds per unique IC. Subsequent runs are instant.
+- **EasyEDA rate-limited warning in logs** — first run of `pcb_generate` pauses ~12 seconds per part whose nets reference pins by *name*. Parts wired by pad number are skipped entirely, so a board of mostly passives is far quicker than the part count suggests. Subsequent runs are instant.
 
 ## Reference docs
 

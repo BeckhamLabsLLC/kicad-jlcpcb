@@ -50,9 +50,12 @@ job is to eliminate the weeks of tedious wire-drawing from the workflow.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from . import config
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,47 @@ logger = logging.getLogger(__name__)
 # start and other tools can still run when KiCad is missing.
 pcbnew = None  # populated by _ensure_pcbnew()
 
+
+def resolve_footprint_dir(explicit: str | None = None) -> str | None:
+    """Locate KiCad's stock footprint libraries. Returns None if not found.
+
+    Order: an explicit path, then the environment variables KiCad itself
+    uses (the same ones its `fp-lib-table` entries expand), then the
+    known install locations per platform.
+
+    This used to be the hardcoded string "/usr/share/kicad/footprints",
+    which meant `pcb_generate` could not place a single footprint on
+    macOS or Windows — including for users whose KiCad the plugin had
+    just successfully detected.
+    """
+    if explicit:
+        return explicit if Path(explicit).expanduser().is_dir() else None
+
+    for var in config.FOOTPRINT_DIR_ENV_VARS:
+        value = os.environ.get(var)
+        if value and Path(value).expanduser().is_dir():
+            return str(Path(value).expanduser())
+
+    for candidate in config.FOOTPRINT_DIR_CANDIDATES:
+        path = Path(candidate).expanduser()
+        if path.is_dir():
+            return str(path)
+    return None
+
+
+def _footprint_dir_error() -> str:
+    """Message for when no footprint library could be found anywhere."""
+    return (
+        "KiCad's footprint libraries could not be found. Looked at "
+        f"{', '.join(config.FOOTPRINT_DIR_ENV_VARS)} and "
+        f"{len(config.FOOTPRINT_DIR_CANDIDATES)} standard install locations.\n"
+        "Set KJLC_FOOTPRINT_DIR to the directory containing the .pretty "
+        "folders (e.g. /usr/share/kicad/footprints), or pass lib_dir to "
+        "pcb_generate."
+    )
+
+
+# Kept for backwards compatibility; prefer resolve_footprint_dir().
 LIB_DIR_DEFAULT = "/usr/share/kicad/footprints"
 
 # Layout constants — match the SoilNode trial that produced a usable board
@@ -251,10 +295,22 @@ def _load_footprint(pcb, board, lib: str, fp: str, lib_dir: str):
     """Load a footprint from the KiCad standard library and add it to the board."""
     lib_path = f"{lib_dir}/{lib}.pretty"
     if not Path(lib_path).is_dir():
-        raise PcbGenerationError(f"Footprint library not found: {lib_path}")
+        available = sorted(p.stem for p in Path(lib_dir).glob("*.pretty"))
+        hint = ""
+        if available:
+            close = [n for n in available if lib.lower() in n.lower() or n.lower() in lib.lower()]
+            hint = f" Did you mean: {', '.join(close[:5])}?" if close else ""
+        raise PcbGenerationError(
+            f"Footprint library not found: {lib_path} "
+            f"({len(available)} libraries present in {lib_dir}).{hint}"
+        )
     f = pcb.FootprintLoad(lib_path, fp)
     if f is None:
-        raise PcbGenerationError(f"Footprint not found: {lib}/{fp}")
+        raise PcbGenerationError(
+            f"Footprint not found: {lib}/{fp}. The library exists but has no "
+            f"footprint by that name — check the exact spelling in KiCad's "
+            f"footprint browser."
+        )
     board.Add(f)
     return f
 
@@ -280,11 +336,31 @@ def _add_board_outline(pcb, board, width_mm: float, height_mm: float) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _refs_needing_pin_names(nets: dict[str, list[tuple[str, str]]]) -> set[str]:
+    """Refs whose nets reference at least one pin by name rather than number.
+
+    Only these need an EasyEDA pin map. A decoupling cap wired as
+    ("C1", "1") needs nothing fetched — its pads are already numbers.
+
+    This is most of the wait on a typical board. EasyEDA is rate-limited
+    to one request per 12 seconds, and the old code fetched for every
+    component carrying an LCSC number, so a 13-part board with 9 passives
+    spent ~108 seconds fetching maps it then never used.
+    """
+    needed: set[str] = set()
+    for members in nets.values():
+        for ref, pin in members:
+            if not str(pin).isdigit():
+                needed.add(ref)
+    return needed
+
+
 async def _resolve_pinmaps(
     components: list[dict],
     *,
     auto_fetch: bool,
     force_refresh: bool,
+    needed_refs: set[str] | None = None,
 ) -> dict[str, dict[str, str]]:
     """For each component, build the pin-name → pad-number map.
 
@@ -315,6 +391,11 @@ async def _resolve_pinmaps(
         if explicit:
             resolved[ref] = dict(explicit)
             continue
+        if needed_refs is not None and ref not in needed_refs:
+            # Every net touching this part already uses pad numbers, so a
+            # pin-name map would be fetched and discarded.
+            resolved[ref] = {}
+            continue
         if auto_fetch and comp.get("lcsc"):
             try:
                 pm = await part_library.get_pin_map(comp["lcsc"], force_refresh=force_refresh)
@@ -342,7 +423,7 @@ async def generate_pcb(
     spec: dict,
     output_path: str | Path,
     *,
-    lib_dir: str = LIB_DIR_DEFAULT,
+    lib_dir: str | None = None,
     auto_fetch_pinmaps: bool = True,
     force_refresh: bool = False,
 ) -> GenerationResult:
@@ -360,15 +441,31 @@ async def generate_pcb(
     """
     pcb = _ensure_pcbnew()
 
+    resolved_lib_dir = resolve_footprint_dir(lib_dir)
+    if not resolved_lib_dir:
+        raise PcbGenerationError(_footprint_dir_error())
+
     board_cfg, components, nets = _validate_spec(spec)
     out = Path(output_path).expanduser().resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
 
     # Phase 1: resolve pinmaps (async — may hit EasyEDA).
+    needed = _refs_needing_pin_names(nets)
+    skipped = sum(
+        1 for c in components if c.get("lcsc") and not c.get("pinmap") and c["ref"] not in needed
+    )
+    if skipped:
+        logger.info(
+            "Skipping EasyEDA pin-map fetch for %d component(s) whose nets "
+            "use pad numbers only (~%ds saved)",
+            skipped,
+            int(skipped * 12),
+        )
     pinmaps, pinmap_warnings = await _resolve_pinmaps(
         components,
         auto_fetch=auto_fetch_pinmaps,
         force_refresh=force_refresh,
+        needed_refs=needed,
     )
 
     # Phase 2: pcbnew board construction (sync).
@@ -393,7 +490,7 @@ async def generate_pcb(
     for comp in components:
         ref = comp["ref"]
         try:
-            f = _load_footprint(pcb, board, comp["lib"], comp["fp"], lib_dir)
+            f = _load_footprint(pcb, board, comp["lib"], comp["fp"], resolved_lib_dir)
         except PcbGenerationError as e:
             errors.append(f"{ref}: {e}")
             continue
