@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kicad-jlcpcb"
-version = "0.6.0"
+version = "0.7.0"
 description = "MCP server that generates JLCPCB-ready KiCad PCB projects from descriptions, BOMs, or existing KiCad projects"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -97,3 +97,21 @@ ignore = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
+
+
+[tool.coverage.run]
+source = ["kicad_jlcpcb_mcp"]
+branch = true
+omit = ["*/__main__.py"]
+
+[tool.coverage.report]
+# Lines that only run when an optional dependency or platform is present,
+# and are covered by the KICAD_INSTALLED / KJLC_NETWORK_TESTS suites rather
+# than the default offline run.
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+show_missing = true

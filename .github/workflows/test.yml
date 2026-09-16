@@ -9,11 +9,23 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # The README claims macOS and Windows support, and the plugin now
+          # has real per-platform code for both: kicad-cli lives inside the
+          # macOS .app bundle and under Program Files on Windows, and the
+          # footprint directory differs on all three. None of that was
+          # exercised anywhere until this matrix existed. One Python version
+          # each is enough — the platform is the variable, not the runtime.
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
 
     steps:
       - uses: actions/checkout@v7
@@ -30,10 +42,11 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run tests (non-KiCad suite)
-        env:
-          PYTHONPATH: src
-        run: pytest tests/ --tb=short -v
+        run: pytest tests/ --tb=short
 
-      # Note: KICAD_INSTALLED=1 integration tests require a KiCad install with
-      # the pcbnew Python bindings and are not run in CI. Run them locally with:
-      #   KICAD_INSTALLED=1 PYTHONPATH=src pytest tests/
+      # KICAD_INSTALLED=1 integration tests need a KiCad install with the
+      # pcbnew Python bindings, which no hosted runner has. Run them locally:
+      #   KICAD_INSTALLED=1 pytest tests/
+      #
+      # Live upstream checks run on their own weekly schedule; see
+      # .github/workflows/contract.yml

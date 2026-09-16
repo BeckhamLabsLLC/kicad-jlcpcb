@@ -466,6 +466,11 @@ async def pcb_export_drill(pcb_path: str | Path, output_dir: str | Path) -> dict
         "gerberx2",
         "--excellon-zeros-format",
         "decimal",
+        # Stated rather than left to the default, because all three exports
+        # must agree. Gerbers have no origin option and are always absolute,
+        # so drill and placement have to be absolute too — see pcb_export_pos.
+        "--drill-origin",
+        "absolute",
         str(pcb),
     ]
     rc, stdout, stderr = await _run(args, timeout=120.0)
@@ -495,7 +500,14 @@ async def pcb_export_pos(pcb_path: str | Path, output_path: str | Path) -> dict:
         "csv",
         "--units",
         "mm",
-        "--use-drill-file-origin",
+        # Deliberately *not* --use-drill-file-origin. Gerber export has no
+        # origin option and always uses absolute coordinates, so a placement
+        # file referenced to the drill/place origin would sit in a different
+        # coordinate system than the board it describes. On a board this
+        # plugin generated the two happen to agree, because no aux origin is
+        # ever set — but on a project the user made in KiCad, every component
+        # would be offset by whatever origin they chose, and JLCPCB's preview
+        # would show the parts off the board.
         "--side",
         "both",
         str(pcb),

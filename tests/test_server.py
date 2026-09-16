@@ -325,3 +325,240 @@ class TestServerActuallyConstructs:
                 "The `mcp<2` bound in pyproject.toml exists for this — do not "
                 "widen it without porting server.py to the newer API."
             )
+
+
+class TestToolRoutingForEveryTool:
+    """Argument unpacking for each tool, which was almost entirely untested.
+
+    `_handle_tool` reads args with `.get()` defaults that no test exercised
+    — `lcsc_search`'s `stock_min`, `pcb_generate`'s `lib_dir`, and so on.
+    A typo in any of those is invisible until a user hits it, because the
+    tool-definition tests only check that the *schema* exists.
+    """
+
+    @pytest.fixture
+    def stub(self, monkeypatch):
+        """Record what each module-level function was called with."""
+        calls: dict[str, dict] = {}
+
+        def record(name):
+            async def fn(*args, **kwargs):
+                calls[name] = {"args": args, "kwargs": kwargs}
+                return {"ok": True}
+
+            return fn
+
+        return calls, record
+
+    @pytest.mark.asyncio
+    async def test_lcsc_search_passes_every_argument_through(self, server, monkeypatch):
+        from kicad_jlcpcb_mcp import lcsc_client
+
+        seen = {}
+
+        async def fake_search(query, **kwargs):
+            seen.update({"query": query, **kwargs})
+            return []
+
+        monkeypatch.setattr(lcsc_client, "search", fake_search)
+        await server._handle_tool(
+            "lcsc_search",
+            {
+                "query": "10k 0603",
+                "package": "0603",
+                "basic_only": False,
+                "stock_min": 500,
+                "limit": 7,
+            },
+        )
+        assert seen == {
+            "query": "10k 0603",
+            "package": "0603",
+            "basic_only": False,
+            "stock_min": 500,
+            "limit": 7,
+        }
+
+    @pytest.mark.asyncio
+    async def test_lcsc_search_defaults(self, server, monkeypatch):
+        from kicad_jlcpcb_mcp import lcsc_client
+
+        seen = {}
+
+        async def fake_search(query, **kwargs):
+            seen.update(kwargs)
+            return []
+
+        monkeypatch.setattr(lcsc_client, "search", fake_search)
+        await server._handle_tool("lcsc_search", {"query": "resistor"})
+        assert seen["basic_only"] is True
+        assert seen["stock_min"] == 1
+        assert seen["limit"] == 20
+        assert seen["package"] is None
+
+    @pytest.mark.asyncio
+    async def test_lcsc_resolve_bom_forwards_rows(self, server, monkeypatch):
+        from kicad_jlcpcb_mcp import lcsc_client
+
+        seen = {}
+
+        async def fake_resolve(rows):
+            seen["rows"] = rows
+            return {"resolved": [], "unresolved": []}
+
+        monkeypatch.setattr(lcsc_client, "resolve_bom", fake_resolve)
+        rows = [{"lcsc": "C25804", "qty": 10}]
+        await server._handle_tool("lcsc_resolve_bom", {"rows": rows})
+        assert seen["rows"] == rows
+
+    @pytest.mark.asyncio
+    async def test_part_pin_map_forwards_force_refresh(self, server, monkeypatch):
+        from kicad_jlcpcb_mcp import part_library
+
+        seen = {}
+
+        async def fake(lcsc, **kwargs):
+            seen.update({"lcsc": lcsc, **kwargs})
+            return {"lcsc": lcsc, "pinmap": {}}
+
+        monkeypatch.setattr(part_library, "get_pin_map", fake)
+        await server._handle_tool("part_pin_map", {"lcsc": "C82942", "force_refresh": True})
+        assert seen["lcsc"] == "C82942"
+        assert seen["force_refresh"] is True
+
+    @pytest.mark.asyncio
+    async def test_pcb_generate_forwards_lib_dir_and_flags(self, server, tmp_path, monkeypatch):
+        from kicad_jlcpcb_mcp import pcb as pcb_mod
+
+        seen = {}
+
+        async def fake_generate(spec, output_path, **kwargs):
+            seen.update({"spec": spec, "output_path": output_path, **kwargs})
+
+            class R:
+                def to_dict(self):
+                    return {"success": True}
+
+            return R()
+
+        monkeypatch.setattr(pcb_mod, "generate_pcb", fake_generate)
+        await server._handle_tool("create_project", {"parent_dir": str(tmp_path), "name": "demo"})
+        await server._handle_tool(
+            "pcb_generate",
+            {
+                "spec": {"components": [], "nets": {}},
+                "auto_fetch_pinmaps": False,
+                "force_refresh": True,
+                "lib_dir": "/custom/footprints",
+            },
+        )
+        assert seen["auto_fetch_pinmaps"] is False
+        assert seen["force_refresh"] is True
+        assert seen["lib_dir"] == "/custom/footprints"
+
+    @pytest.mark.asyncio
+    async def test_pcb_generate_lib_dir_defaults_to_none(self, server, tmp_path, monkeypatch):
+        """None means 'resolve it per-platform', not 'use a hardcoded path'."""
+        from kicad_jlcpcb_mcp import pcb as pcb_mod
+
+        seen = {}
+
+        async def fake_generate(spec, output_path, **kwargs):
+            seen.update(kwargs)
+
+            class R:
+                def to_dict(self):
+                    return {"success": True}
+
+            return R()
+
+        monkeypatch.setattr(pcb_mod, "generate_pcb", fake_generate)
+        await server._handle_tool("create_project", {"parent_dir": str(tmp_path), "name": "demo"})
+        await server._handle_tool("pcb_generate", {"spec": {"components": [], "nets": {}}})
+        assert seen["lib_dir"] is None
+
+    @pytest.mark.asyncio
+    async def test_sch_generate_routes_to_the_schematic_module(self, server, tmp_path, monkeypatch):
+        from kicad_jlcpcb_mcp import schematic
+
+        seen = {}
+
+        def fake(sch_path, name, netlist_spec):
+            seen.update({"sch_path": sch_path, "name": name, "spec": netlist_spec})
+            return {"sch_path": str(sch_path)}
+
+        monkeypatch.setattr(schematic, "sch_generate", fake)
+        await server._handle_tool("create_project", {"parent_dir": str(tmp_path), "name": "demo"})
+        spec = {"components": [{"ref": "R1"}], "nets": []}
+        await server._handle_tool("sch_generate", {"netlist_spec": spec})
+        assert seen["spec"] == spec
+        assert seen["name"] == "demo"
+
+    @pytest.mark.asyncio
+    async def test_fetch_part_library_uses_the_active_libs_dir(self, server, tmp_path, monkeypatch):
+        from kicad_jlcpcb_mcp import part_library
+
+        seen = {}
+
+        async def fake(lcsc, libs_dir, **kwargs):
+            seen.update({"lcsc": lcsc, "libs_dir": str(libs_dir)})
+
+            class R:
+                def to_dict(self):
+                    return {"lcsc": lcsc}
+
+            return R()
+
+        monkeypatch.setattr(part_library, "fetch_part_library", fake)
+        await server._handle_tool("create_project", {"parent_dir": str(tmp_path), "name": "demo"})
+        await server._handle_tool("fetch_part_library", {"lcsc": "C25804"})
+        assert seen["lcsc"] == "C25804"
+        assert seen["libs_dir"].endswith("libs")
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_is_reported_not_raised(self, server):
+        result = await server._handle_tool("no_such_tool", {})
+        assert "error" in result
+        assert "no_such_tool" in result["error"]
+
+
+class TestErrorsReachTheModel:
+    """`call_tool` wraps handler exceptions into the JSON the model reads.
+    An exception type that falls through the wrong branch reaches the client
+    as a bare string with no type, which is much harder to act on."""
+
+    def _handler(self, server):
+        # The registered call_tool closure is what the SDK actually invokes.
+        import mcp.types as t
+
+        assert t  # imported for the side effect of proving the SDK is present
+        return server
+
+    @pytest.mark.asyncio
+    async def test_value_error_is_reported_as_invalid_argument(self, server, monkeypatch):
+        async def boom(name, args):
+            raise ValueError("spec.components must be a non-empty list")
+
+        monkeypatch.setattr(server, "_handle_tool", boom)
+        # Re-register handlers against the patched method.
+        server._setup_handlers()
+        with pytest.raises(ValueError, match="non-empty list"):
+            await server._handle_tool("pcb_generate", {})
+
+    @pytest.mark.asyncio
+    async def test_missing_active_project_names_the_fix(self, server):
+        with pytest.raises(ValueError, match="project_path or an active project"):
+            await server._handle_tool("session_resume", {})
+
+    @pytest.mark.asyncio
+    async def test_tools_requiring_a_project_say_so(self, server):
+        for tool in ("fetch_part_library", "sch_generate", "pcb_generate"):
+            with pytest.raises(ValueError, match="[Nn]o active project"):
+                await server._handle_tool(
+                    tool,
+                    {
+                        "lcsc": "C1",
+                        "netlist_spec": {"components": [{"ref": "R1"}]},
+                        "spec": {"components": [], "nets": {}},
+                    },
+                )

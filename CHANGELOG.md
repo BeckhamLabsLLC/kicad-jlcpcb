@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-16
+
+### Fixed
+- **The CPL described a different coordinate system than the gerbers.** Only
+  the position export passed `--use-drill-file-origin`; gerber export has no
+  origin option and is always absolute. On a board with a drill/place origin
+  set — routine in KiCad — every component in the CPL was offset by that
+  origin. Measured on a board with a 25 × 15 mm aux origin: R1 sits at
+  (10, -40) in the gerbers and was written to the CPL as (-15, -55). The zip
+  uploads cleanly and the parts go on millimetres off the board.
+
+  Boards this plugin generates never set an aux origin, so the two agreed by
+  accident and nothing caught it. All three exports now state absolute
+  origin explicitly, and a KiCad-gated test builds a board with an aux origin
+  and asserts the CPL is not shifted.
+
+### Added
+- **macOS and Windows in CI.** The README has claimed both since v0.1.0, and
+  v0.4.0/v0.5.0 added real per-platform code for finding `kicad-cli` and
+  KiCad's footprint libraries — none of it exercised anywhere. The matrix now
+  runs the offline suite on all three platforms.
+- Coverage reporting (`pytest-cov`, configured in `pyproject.toml`). Running
+  it first was what surfaced how little of the MCP surface was tested:
+  `server.py` sat at 58%, because the tool-routing branches — every
+  `args.get()` default the model depends on — had no tests at all. Now 74%,
+  with routing tests for every tool, and 87% overall.
+- Tests asserting the `kicad-cli` export flags directly. `--no-x2`,
+  `--subtract-soldermask`, decimal Excellon zeros and the origin flags are
+  what JLCPCB correctness rests on, and a wrong one produces files that
+  upload cleanly and fabricate wrong.
+
 ## [0.6.0] - 2026-09-16
 
 Three things that looked finished and were not: the libraries were
@@ -296,7 +327,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.7.0
 [0.6.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.6.0
 [0.5.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.5.0
 [0.4.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.4.0

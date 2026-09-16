@@ -315,3 +315,141 @@ Report includes: Errors, Warnings
         the old parser returned (0, 0) for it."""
         errors, warnings = _parse_erc_report(self.KICAD_10_REPORT)
         assert (errors, warnings) != (0, 0)
+
+
+class TestExportArgumentConstruction:
+    """The flags passed to kicad-cli are what JLCPCB correctness rests on.
+
+    A wrong `--excellon-zeros-format` or a missing `--subtract-soldermask`
+    produces files that upload cleanly and fabricate wrong, so the argv is
+    asserted directly rather than trusted.
+    """
+
+    @pytest.fixture
+    def capture(self, monkeypatch):
+        seen: dict = {}
+
+        async def fake_run(args, *, cwd=None, timeout=60.0):
+            seen["args"] = list(args)
+            seen["timeout"] = timeout
+            return 0, "", ""
+
+        monkeypatch.setattr(kicad_cli, "_run", fake_run)
+        return seen
+
+    @pytest.mark.asyncio
+    async def test_gerber_export_flags(self, capture, tmp_path):
+        await kicad_cli.pcb_export_gerbers(tmp_path / "b.kicad_pcb", tmp_path / "out")
+        args = capture["args"]
+        assert args[:3] == ["pcb", "export", "gerbers"]
+        # JLCPCB wants X1-format gerbers with soldermask subtracted from silk.
+        assert "--no-x2" in args
+        assert "--subtract-soldermask" in args
+
+    @pytest.mark.asyncio
+    async def test_drill_export_flags(self, capture, tmp_path):
+        await kicad_cli.pcb_export_drill(tmp_path / "b.kicad_pcb", tmp_path / "out")
+        args = capture["args"]
+        assert args[:3] == ["pcb", "export", "drill"]
+        assert "decimal" in args
+        # All three exports must share one origin. Gerbers have no origin
+        # option and are always absolute, so drill and placement must be too.
+        assert args[args.index("--drill-origin") + 1] == "absolute"
+
+    @pytest.mark.asyncio
+    async def test_pos_export_is_csv_in_mm_for_both_sides(self, capture, tmp_path):
+        await kicad_cli.pcb_export_pos(tmp_path / "b.kicad_pcb", tmp_path / "pos.csv")
+        args = capture["args"]
+        assert args[:3] == ["pcb", "export", "pos"]
+        assert "csv" in args and "mm" in args
+        assert "both" in args, "a bottom-side part must not be dropped"
+        # Must NOT use the drill-file origin: gerbers are absolute, so a
+        # placement file referenced to a different origin puts every part
+        # off the board on a project where the user set an aux origin.
+        assert "--use-drill-file-origin" not in args
+
+    @pytest.mark.asyncio
+    async def test_all_three_exports_share_one_origin(self, capture, tmp_path):
+        """The bug this guards: only `pos` used the drill-file origin, so on
+        any board with an aux origin set the CPL described a different
+        coordinate system than the gerbers."""
+        await kicad_cli.pcb_export_gerbers(tmp_path / "b.kicad_pcb", tmp_path / "o")
+        gerber_args = list(capture["args"])
+        await kicad_cli.pcb_export_drill(tmp_path / "b.kicad_pcb", tmp_path / "o")
+        drill_args = list(capture["args"])
+        await kicad_cli.pcb_export_pos(tmp_path / "b.kicad_pcb", tmp_path / "p.csv")
+        pos_args = list(capture["args"])
+
+        assert not any("origin" in a for a in gerber_args), "gerbers are always absolute"
+        assert drill_args[drill_args.index("--drill-origin") + 1] == "absolute"
+        assert "--use-drill-file-origin" not in pos_args
+
+    @pytest.mark.asyncio
+    async def test_bom_export_requests_the_lcsc_field(self, capture, tmp_path):
+        await kicad_cli.sch_export_bom(tmp_path / "s.kicad_sch", tmp_path / "bom.csv")
+        args = capture["args"]
+        assert args[:3] == ["sch", "export", "bom"]
+        joined = " ".join(args)
+        assert "LCSC" in joined, "without it JLCPCB has nothing to source from"
+
+    @pytest.mark.asyncio
+    async def test_nonzero_exit_raises_with_the_output_attached(self, monkeypatch, tmp_path):
+        async def fake_run(args, *, cwd=None, timeout=60.0):
+            return 1, "", "Error: board file is corrupt"
+
+        monkeypatch.setattr(kicad_cli, "_run", fake_run)
+        with pytest.raises(KicadCliError, match="board file is corrupt"):
+            await kicad_cli.pcb_export_gerbers(tmp_path / "b.kicad_pcb", tmp_path / "o")
+
+
+@pytest.mark.skipif(
+    os.environ.get("KICAD_INSTALLED") != "1",
+    reason="requires kicad-cli and pcbnew (set KICAD_INSTALLED=1)",
+)
+class TestExportOriginsAgreeOnARealBoard:
+    """Gerbers and the CPL must describe the same coordinate system.
+
+    Boards this plugin generates never set an aux origin, so the old
+    `--use-drill-file-origin` on the position export happened to agree with
+    the gerbers and the bug stayed invisible. Setting a drill/place origin
+    is routine in KiCad, and on such a board every component in the CPL was
+    offset by that origin — parts placed millimetres off the board, with a
+    zip that uploads cleanly.
+    """
+
+    def _board_with_aux_origin(self, tmp_path, x_mm, y_mm):
+        import pcbnew
+
+        board = pcbnew.BOARD()
+        board.SetCopperLayerCount(2)
+        fp = pcbnew.FootprintLoad(
+            "/usr/share/kicad/footprints/Resistor_SMD.pretty", "R_0603_1608Metric"
+        )
+        if fp is None:
+            pytest.skip("KiCad standard footprint libraries not present")
+        fp.SetReference("R1")
+        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(10.0), pcbnew.FromMM(10.0)))
+        board.Add(fp)
+        board.GetDesignSettings().SetAuxOrigin(
+            pcbnew.VECTOR2I(pcbnew.FromMM(x_mm), pcbnew.FromMM(y_mm))
+        )
+        path = tmp_path / "aux.kicad_pcb"
+        board.Save(str(path))
+        return path
+
+    @pytest.mark.asyncio
+    async def test_cpl_is_not_shifted_by_the_aux_origin(self, tmp_path):
+        pytest.importorskip("pcbnew")
+        board = self._board_with_aux_origin(tmp_path, 25.0, 15.0)
+
+        await kicad_cli.pcb_export_pos(board, tmp_path / "pos.csv")
+        row = [
+            line
+            for line in (tmp_path / "pos.csv").read_text().splitlines()
+            if line.startswith('"R1"')
+        ]
+        assert row, "R1 missing from the position file"
+        x = float(row[0].split(",")[3])
+        # The footprint sits at x=10mm. Referenced to a 25mm aux origin it
+        # would read -15mm.
+        assert abs(x - 10.0) < 0.01, f"CPL x={x}, expected 10.0 (aux origin leaked in)"
