@@ -49,7 +49,6 @@ class KicadJlcpcbServer:
         async def list_tools() -> list[Tool]:
             return _tool_definitions()
 
-        @self._server.call_tool()
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             try:
                 result = await self._handle_tool(name, arguments)
@@ -73,6 +72,13 @@ class KicadJlcpcbServer:
                 # MCP framework surfaces it. Bugs should be loud, not wrapped.
                 logger.exception(f"Unexpected error in tool {name}")
                 raise
+
+        # Registered explicitly rather than with @self._server.call_tool(),
+        # and kept on the instance, so the error-wrapping boundary can be
+        # called directly in tests. It decides what a failure *looks like*
+        # to the model, which matters about as much as the failure itself.
+        self._call_tool = call_tool
+        self._server.call_tool()(call_tool)
 
     async def _handle_tool(self, name: str, args: dict) -> Any:
         """Route tool calls to per-stage modules."""

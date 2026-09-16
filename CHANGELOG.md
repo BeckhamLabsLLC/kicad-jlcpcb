@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-16
+
 ### Added
 - A test that the shipped example actually builds. It produced five
   unresolved pins and nothing noticed, because no test had ever fed
@@ -13,6 +15,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   Structural checks run offline; the every-pin-resolves check is gated on
   `KJLC_NETWORK_TESTS=1`, since the ESP32's pin names are precisely what
   auto-fetch exists to supply.
+- Tests for the console entry point. `main()` and `_preflight()` were the
+  least-covered code in the package at 14%, and both had already been wrong
+  once: `--help` blocked on stdin because argv was ignored, and the
+  missing-dependency message is the only thing a user sees when Claude Code's
+  MCP bootstrap swallows an ImportError. Now 83%, including running the real
+  command as a subprocess.
+- Tests for `call_tool`'s error wrapping — the boundary that decides what a
+  failure *looks like* to the model. A handler exception landing in the wrong
+  branch turns a typed `invalid_argument` into a bare string with no type,
+  which is much harder to act on. It is registered explicitly rather than via
+  the decorator now, so it can be called directly in tests.
+
+Coverage is 91% overall.
 
 ## [0.13.0] - 2026-09-16
 
@@ -470,7 +485,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.14.0
 [0.13.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.13.0
 [0.12.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.12.0
 [0.11.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.11.0

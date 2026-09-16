@@ -633,3 +633,69 @@ class TestSessionConfirmBom:
         d.mkdir()
         with pytest.raises(ValueError, match="create_project or load_project"):
             await server._handle_tool("session_confirm_bom", {"project_path": str(d)})
+
+
+class TestCallToolErrorWrapping:
+    """`call_tool` is the boundary where a handler exception becomes
+    something the model reads. Getting the branch wrong turns a clear
+    "invalid_argument" into a bare string with no type, which is much
+    harder to act on."""
+
+    async def _call(self, server, name, args):
+        import json
+
+        result = await server._call_tool(name, args)
+        return json.loads(result[0].text)
+
+    @pytest.mark.asyncio
+    async def test_value_error_becomes_a_typed_json_error(self, server, monkeypatch):
+        async def boom(name, args):
+            raise ValueError("spec.components must be a non-empty list")
+
+        monkeypatch.setattr(server, "_handle_tool", boom)
+        body = await self._call(server, "pcb_generate", {})
+        assert body["type"] == "invalid_argument"
+        assert "non-empty list" in body["error"]
+
+    @pytest.mark.asyncio
+    async def test_missing_file_is_typed_too(self, server, monkeypatch):
+        async def boom(name, args):
+            raise FileNotFoundError("no .kicad_pcb at /tmp/x")
+
+        monkeypatch.setattr(server, "_handle_tool", boom)
+        body = await self._call(server, "package_for_jlcpcb", {})
+        assert body["type"] == "file_not_found"
+
+    @pytest.mark.asyncio
+    async def test_a_successful_result_is_plain_json(self, server, tmp_path):
+        body = await self._call(
+            server, "create_project", {"parent_dir": str(tmp_path), "name": "demo"}
+        )
+        assert "active_project" in body
+        assert "error" not in body
+
+    @pytest.mark.asyncio
+    async def test_an_unexpected_exception_is_re_raised_not_swallowed(self, server, monkeypatch):
+        """A bug in a handler must reach the logs, not be dressed up as a
+        successful result the model then acts on."""
+
+        async def boom(name, args):
+            raise RuntimeError("something genuinely unexpected")
+
+        monkeypatch.setattr(server, "_handle_tool", boom)
+        with pytest.raises(RuntimeError, match="genuinely unexpected"):
+            await server._call_tool("pcb_generate", {})
+
+    @pytest.mark.asyncio
+    async def test_the_payload_is_json_the_model_can_parse(self, server, tmp_path):
+        """Non-serialisable values must not blow up the response."""
+        from pathlib import Path
+
+        async def returns_a_path(name, args):
+            return {"where": Path(tmp_path) / "x.kicad_pcb"}
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(server, "_handle_tool", returns_a_path)
+        body = await self._call(server, "anything", {})
+        monkeypatch.undo()
+        assert "x.kicad_pcb" in body["where"]
