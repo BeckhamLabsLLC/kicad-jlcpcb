@@ -265,3 +265,72 @@ class TestMultilayerBoards:
         names = set(zipfile.ZipFile(result.zip_path).namelist())
         assert not any(n.endswith((".G1", ".G2")) for n in names)
         assert "board.GTL" in names and "board.GBL" in names
+
+
+class TestExpectedCopperVerification:
+    """`pack_for_jlcpcb` only ever sees a directory of files, so it cannot
+    know on its own that a board had four copper layers. The caller passes
+    the expected set, which closes the loop: export the right layers, then
+    verify they all arrived."""
+
+    def _plant(self, d, stem, layers):
+        d.mkdir(parents=True, exist_ok=True)
+        for layer, ext in layers:
+            (d / f"{stem}-{layer}.{ext}").write_text("G04*\nM02*\n")
+        (d / f"{stem}.drl").write_text("M48\nM30\n")
+
+    TWO_LAYER = [
+        ("F_Cu", "gtl"),
+        ("B_Cu", "gbl"),
+        ("F_Paste", "gtp"),
+        ("B_Paste", "gbp"),
+        ("F_Silkscreen", "gto"),
+        ("B_Silkscreen", "gbo"),
+        ("F_Mask", "gts"),
+        ("B_Mask", "gbs"),
+        ("Edge_Cuts", "gm1"),
+    ]
+
+    def test_missing_inner_copper_is_a_loud_warning(self, tmp_path):
+        """The exact 0.9.0 bug: a 4-layer board whose inner gerbers never
+        got exported produces a zip that looks complete."""
+        src = tmp_path / "g"
+        self._plant(src, "board", self.TWO_LAYER)
+        result = pack_for_jlcpcb(
+            src,
+            src,
+            tmp_path / "out.zip",
+            project_name="board",
+            expected_copper=["GTL", "G1", "G2", "GBL"],
+        )
+        joined = " ".join(result.warnings)
+        assert "G1" in joined and "G2" in joined
+        assert "Do NOT order" in joined
+
+    def test_no_warning_when_every_copper_layer_arrived(self, tmp_path):
+        src = tmp_path / "g"
+        self._plant(
+            src,
+            "board",
+            self.TWO_LAYER + [("In1_Cu", "g1"), ("In2_Cu", "g2")],
+        )
+        result = pack_for_jlcpcb(
+            src,
+            src,
+            tmp_path / "out.zip",
+            project_name="board",
+            expected_copper=["GTL", "G1", "G2", "GBL"],
+        )
+        assert not any("did not make it" in w for w in result.warnings)
+
+    def test_two_layer_board_needs_no_expectation(self, tmp_path):
+        src = tmp_path / "g"
+        self._plant(src, "board", self.TWO_LAYER)
+        result = pack_for_jlcpcb(
+            src,
+            src,
+            tmp_path / "out.zip",
+            project_name="board",
+            expected_copper=["GTL", "GBL"],
+        )
+        assert not any("did not make it" in w for w in result.warnings)

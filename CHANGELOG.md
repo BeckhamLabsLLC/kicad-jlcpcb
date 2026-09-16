@@ -18,7 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   back with every inner-layer net missing.
 
   The copper stackup is now read from the board file and the export matches
-  it, up to six layers.
+  it, up to six layers. `package_for_jlcpcb` then verifies every copper layer
+  the board has actually reached the zip — `pack_for_jlcpcb` only ever sees a
+  directory of files, so it could not catch this on its own.
 - **The inner-layer Protel extensions were wrong.** `In1_Cu` mapped to `G2L`
   and `In2_Cu` to `G3L` — a transposition of Altium's `GL2`/`GL3`. JLCPCB
   documents `.G1`/`.G2`, which is also what KiCad writes natively, so the two

@@ -315,7 +315,7 @@ class KicadJlcpcbServer:
         """
         from pathlib import Path
 
-        from . import gerber_pack, jlcpcb_format, kicad_cli
+        from . import config, gerber_pack, jlcpcb_format, kicad_cli
         from . import session as session_mod
 
         proj = self._require_active_project()
@@ -408,6 +408,11 @@ class KicadJlcpcbServer:
             project_name=proj["name"],
             cpl_path=cpl_out,
             bom_path=bom_out,
+            expected_copper=[
+                config.JLCPCB_GERBER_EXTENSIONS[layer.replace(".", "_")]
+                for layer in kicad_cli.detect_copper_layers(pcb_path)
+                if layer.replace(".", "_") in config.JLCPCB_GERBER_EXTENSIONS
+            ],
         )
 
         warnings = list(pack_result.warnings) + extra_warnings

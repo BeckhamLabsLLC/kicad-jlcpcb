@@ -117,6 +117,7 @@ def pack_for_jlcpcb(
     project_name: str = "board",
     cpl_path: str | Path | None = None,
     bom_path: str | Path | None = None,
+    expected_copper: list[str] | None = None,
 ) -> PackResult:
     """Build a JLCPCB-ready zip from KiCad export outputs.
 
@@ -179,6 +180,21 @@ def pack_for_jlcpcb(
                 f"Missing typical JLCPCB layers: {sorted(missing)}. "
                 f"Boards without all of these may not pass JLCPCB review."
             )
+
+        # Inner copper can only be checked against what the board actually
+        # has, which this function cannot see on its own — it only ever sees
+        # a directory of files. A 4-layer board whose inner gerbers never
+        # got exported produces a zip that looks complete and fabricates as
+        # 2-layer, so the caller passes the expected set.
+        if expected_copper:
+            missing_copper = set(expected_copper) - present
+            if missing_copper:
+                warnings.append(
+                    f"The board has {len(expected_copper)} copper layers but "
+                    f"{sorted(missing_copper)} did not make it into the zip. "
+                    f"Do NOT order this — it would be fabricated without those "
+                    f"layers, and every net on them would be missing."
+                )
 
         # Drill file
         drill_src = _find_drill_file(d_dir)
