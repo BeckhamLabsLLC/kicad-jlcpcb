@@ -1,6 +1,14 @@
 # SoilNode end-to-end walkthrough
 
-This is a step-by-step trace of what you'll see when running `/pcb-new` on the SoilNode board. Timings are from a fresh Fedora 43 install with KiCad 9.0.8.
+This is a **shape-of-the-flow** document: the order the tools are called in, the
+checkpoint you'll be asked to confirm, and roughly what each response looks
+like. It is illustrative, not a recording — the JSON is trimmed for
+readability, and stock figures and prices move daily, so treat any number here
+as an example rather than a current quote.
+
+Timings are order-of-magnitude on a wired connection. The one that dominates is
+EasyEDA's rate limit, and it applies only to parts whose nets reference pins by
+*name*; anything wired by pad number is skipped.
 
 ## User prompt
 
@@ -102,10 +110,14 @@ Claude builds the dict shown in `spec.json`. Notice:
 
 Claude calls `pcb_generate` with the spec. On first run:
 
-- EasyEDA pin-map fetch for ESP32-C3: ~12 s
-- EasyEDA pin-map fetch for AMS1117-3.3: ~12 s
-- (USB-C, JST-PH, LED, resistors, caps don't need a lookup — they're standard footprints)
+- EasyEDA pin-map fetch, ~12 s each, for the three parts whose nets use pin
+  names: `U1` (ESP32-C3), `U2` (the LDO) and `J1` (USB-C)
+- The other ten parts — resistors, caps, LED, JST-PH headers — are wired by
+  pad number, so no lookup happens at all
 - pcbnew footprint load + placement + net creation: ~5 s
+
+That is 3 fetches for a 13-part board rather than 13. Cached after the first
+run, so a second `pcb_generate` on the same parts is immediate.
 
 Output:
 

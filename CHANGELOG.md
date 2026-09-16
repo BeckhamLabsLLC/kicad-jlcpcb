@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- Platform-specific assumptions in three tests, exposed by the new macOS and
+  Windows CI within minutes of its first run: two asserted the install hint
+  names Fedora (it has been platform-specific since 0.4.0), one asserted a
+  non-executable file is skipped during discovery (Windows has no execute bit,
+  so `os.access(X_OK)` is true for any file that exists), and one asserted a
+  session path starts with `/` (a Windows absolute path starts with a drive
+  letter). All four were test bugs; the per-platform code behaves correctly on
+  all three.
+
+### Changed
+- README and the workflow skill describe what the plugin actually produces
+  now, including the two things worth checking before ordering: a placeholder
+  footprint does not match the real part, and CPL rotations are passed through
+  rather than corrected.
+- The example walkthrough is labelled as illustrative rather than a recording,
+  and its timings reflect that pin-map fetches are now skipped for parts wired
+  by pad number — 3 fetches for the 13-part example, not 13.
+
 ## [0.7.0] - 2026-09-16
 
 ### Fixed

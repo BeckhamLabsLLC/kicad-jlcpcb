@@ -151,6 +151,20 @@ The EasyEDA pin-name extraction is accurate but uses datasheet nomenclature, whi
 ## Reference docs
 
 - `references/jlcpcb-rules.md` — JLCPCB design rules, cost model, manufacturing file requirements
+## Before telling the user the board is ready
+
+Two checks, both of which the tools report and neither of which is optional:
+
+1. **`fetch_part_library` warnings.** If EasyEDA had no geometry for a part,
+   the footprint written is a placeholder that does *not* match the real
+   component. Say so explicitly and point at KiCad's standard libraries for a
+   replacement. Never present a placeholder as a finished footprint.
+2. **`package_for_jlcpcb` warnings.** CPL rotations are passed through from
+   the board. JLCPCB's expected orientation differs from KiCad's for some
+   packages, so tell the user to check the assembly preview after upload.
+   EasyEDA-derived footprints are already in JLCPCB's convention;
+   KiCad-stdlib ones may not be.
+
 - `references/lcsc-search.md` — Where part data comes from and how to write queries that find parts
 - `references/troubleshooting.md` — Quick reference for common runtime failure modes
 - Worked sample project: [`examples/soilnode-esp32/`](../../examples/soilnode-esp32/) in the repo root — full spec, BOM, and step-by-step walkthrough

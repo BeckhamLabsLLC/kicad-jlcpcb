@@ -217,7 +217,7 @@ Set expectations honestly before you start:
 | Resume | `session_resume` | Report where a prior workflow left off for a project dir |
 | Sourcing | `lcsc_search` | Free-text part search, basic-only by default |
 | Sourcing | `lcsc_resolve_bom` | Batch BOM resolution with cost-impact warnings |
-| Sourcing | `fetch_part_library` | Placeholder symbol/footprint fetch into project `libs/` |
+| Sourcing | `fetch_part_library` | Symbol + footprint from EasyEDA's real geometry into project `libs/` |
 | Pin maps | `part_pin_map` | Fetch pin-name → pad-number map from EasyEDA |
 | Schematic | `sch_generate` | Emit `.kicad_sch` from a netlist spec |
 | Schematic | `sch_run_erc` | Run `kicad-cli sch erc` and parse the report |
@@ -334,6 +334,28 @@ Full guide: **[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)**. Most common issues:
 
 ---
 
+## What you get, and what to check
+
+The plugin produces a `.kicad_pcb` with real footprints and every net wired,
+plus a JLCPCB upload zip. Two things are worth checking before you order:
+
+**Part geometry comes from EasyEDA.** Symbols carry the real pin names and
+numbers, and footprints the real pad positions, sizes and drills — EasyEDA,
+LCSC and JLCPCB share a parent company, so this is the same data JLCPCB
+assembles against. When EasyEDA has no geometry for a part, a placeholder is
+written instead and `fetch_part_library` says so in `warnings`. **A
+placeholder footprint will not match the real part** — replace it from
+KiCad's standard libraries before ordering.
+
+**CPL rotations are passed through, not corrected.** JLCPCB's expected
+orientation differs from KiCad's for some packages. Footprints generated from
+EasyEDA already share JLCPCB's convention; footprints you take from KiCad's
+standard libraries may not. The plugin says so rather than applying a guess
+that silently rotates parts — check JLCPCB's assembly preview after upload and
+fix anything that looks wrong there.
+
+---
+
 ## Design rationale (Phase 1.6)
 
 Earlier releases tried to route the board headlessly with Freerouting and produce a JLCPCB Gerber zip directly. That didn't work for real boards — Freerouting 2.1.0 has CLI bugs, can't route RF matching networks, and won't save partial results.
@@ -344,7 +366,7 @@ Phase 1.6 takes the pragmatic win: **the plugin wires everything up, EasyEDA rou
 
 ## Roadmap
 
-- **Phase 2** — auto-placement that respects functional groupings (power domain, RF block, analog front-end), DRC integration, differential-pair awareness.
+- **Next** — auto-placement that respects functional groupings (power domain, RF block, analog front-end), DRC integration, differential-pair awareness, and a per-package CPL rotation table so JLCPCB orientations need no manual correction.
 - **Phase 3** — vision-based schematic extraction: drop in a photo of a hand-drawn schematic, out comes a wired `.kicad_pcb`.
 
 ---
