@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-16
+
+### Fixed
+- **A split drill export shipped only the non-plated holes.** When KiCad wrote
+  `<stem>-PTH.drl` and `<stem>-NPTH.drl` instead of a merged file, the packer
+  took the alphabetically-first one — NPTH — packed it alone, and warned that
+  it had "used the merged file", which did not exist. The board would come
+  back with every via and every plated through-hole missing.
+
+  Both files ship now when only a split pair exists, plated first, with a
+  warning that says what actually happened. A merged file is still preferred
+  and used alone.
+
 ## [0.10.0] - 2026-09-16
 
 ### Fixed
@@ -404,7 +417,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.11.0
 [0.10.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.10.0
 [0.9.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.9.0
 [0.8.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.8.0

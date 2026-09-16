@@ -85,23 +85,38 @@ def _classify_gerber(filename: str) -> tuple[str, str] | None:
     return stem, ext
 
 
-def _find_drill_file(directory: Path) -> Path | None:
-    """Pick the merged Excellon drill file from a directory of KiCad outputs.
+def _is_split_drill(path: Path) -> bool:
+    return "-PTH" in path.name or "-NPTH" in path.name
 
-    KiCad writes drill files as `<stem>.drl` (or sometimes `<stem>-PTH.drl`
-    + `<stem>-NPTH.drl` for plated/non-plated). When `--generate-map` is
-    used we also get a `<stem>-drl.gbr` map. We prefer the single merged
-    `.drl` file; if only the split files exist, we surface a warning so
-    the user can re-export with the merged option.
+
+def _find_drill_files(directory: Path) -> list[Path]:
+    """Return the Excellon drill files to ship, in the order to ship them.
+
+    KiCad writes either a single merged `<stem>.drl` or a split
+    `<stem>-PTH.drl` + `<stem>-NPTH.drl` pair. A merged file is preferred
+    and used alone.
+
+    When only the split pair exists, **both** are returned. Returning one
+    was a quiet way to ruin a board: the earlier code took the
+    alphabetically-first file, which is the NPTH one, so the zip carried
+    only the non-plated holes and the board came back with every via and
+    every plated through-hole missing — while a warning claimed it had
+    "used the merged file".
     """
     drls = sorted(directory.glob("*.drl"))
     if not drls:
-        return None
-    # Prefer a non-PTH/NPTH-suffixed file (= merged)
-    for drl in drls:
-        if "-PTH" not in drl.name and "-NPTH" not in drl.name:
-            return drl
-    return drls[0]
+        return []
+    merged = [p for p in drls if not _is_split_drill(p)]
+    if merged:
+        return merged[:1]
+    # Plated first, so the more important file is the one JLCPCB reads first.
+    return sorted(drls, key=lambda p: "-NPTH" in p.name)
+
+
+def _find_drill_file(directory: Path) -> Path | None:
+    """Back-compat single-file accessor. Prefer _find_drill_files()."""
+    files = _find_drill_files(directory)
+    return files[0] if files else None
 
 
 # ---------------------------------------------------------------------------
@@ -196,28 +211,31 @@ def pack_for_jlcpcb(
                     f"layers, and every net on them would be missing."
                 )
 
-        # Drill file
-        drill_src = _find_drill_file(d_dir)
-        if drill_src is None:
+        # Drill files
+        drill_srcs = _find_drill_files(d_dir)
+        if not drill_srcs:
             warnings.append(
                 "No Excellon (.drl) drill file found. JLCPCB requires drill data; "
                 "re-run kicad-cli pcb export drill before packaging."
             )
-        else:
+        elif len(drill_srcs) == 1 and not _is_split_drill(drill_srcs[0]):
             drill_dest_name = f"{project_name}.{config.JLCPCB_DRILL_EXTENSION}"
-            shutil.copy2(drill_src, staging / drill_dest_name)
+            shutil.copy2(drill_srcs[0], staging / drill_dest_name)
             files_packed.append(drill_dest_name)
-            # If split PTH/NPTH files also exist, warn — JLCPCB wants merged
-            split_drills = [
-                p
-                for p in d_dir.glob("*.drl")
-                if ("-PTH" in p.name or "-NPTH" in p.name) and p != drill_src
-            ]
-            if split_drills:
-                warnings.append(
-                    f"Found split drill files alongside the merged one: "
-                    f"{[p.name for p in split_drills]}. Used the merged file."
-                )
+        else:
+            # Only a split pair exists. Ship both — dropping either loses
+            # real holes — under names that keep the distinction visible.
+            for src in drill_srcs:
+                kind = "NPTH" if "-NPTH" in src.name else "PTH"
+                dest_name = f"{project_name}-{kind}.{config.JLCPCB_DRILL_EXTENSION}"
+                shutil.copy2(src, staging / dest_name)
+                files_packed.append(dest_name)
+            warnings.append(
+                f"KiCad produced split drill files rather than a merged one; "
+                f"shipped both ({', '.join(p.name for p in drill_srcs)}). JLCPCB "
+                f"accepts this, but a merged file is simpler — re-export without "
+                f"--excellon-separate-th if you would rather have one."
+            )
 
         # CPL (pick-and-place / position file) — optional
         if cpl_path:

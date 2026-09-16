@@ -334,3 +334,69 @@ class TestExpectedCopperVerification:
             expected_copper=["GTL", "GBL"],
         )
         assert not any("did not make it" in w for w in result.warnings)
+
+
+class TestSplitDrillFiles:
+    """Shipping one of a split PTH/NPTH pair is a quiet way to ruin a board.
+
+    The old code took the alphabetically-first `.drl`, which is the NPTH
+    one, so the zip carried only the non-plated holes — the board came back
+    with every via and every plated through-hole missing — while a warning
+    claimed it had "used the merged file".
+    """
+
+    def _plant(self, d, drills):
+        d.mkdir(parents=True, exist_ok=True)
+        for layer, ext in [
+            ("F_Cu", "gtl"),
+            ("B_Cu", "gbl"),
+            ("F_Paste", "gtp"),
+            ("B_Paste", "gbp"),
+            ("F_Silkscreen", "gto"),
+            ("B_Silkscreen", "gbo"),
+            ("F_Mask", "gts"),
+            ("B_Mask", "gbs"),
+            ("Edge_Cuts", "gm1"),
+        ]:
+            (d / f"b-{layer}.{ext}").write_text("G04*\nM02*\n")
+        for name in drills:
+            (d / name).write_text("M48\nM30\n")
+        return d
+
+    def _xln(self, zip_path):
+        import zipfile
+
+        return sorted(n for n in zipfile.ZipFile(zip_path).namelist() if n.endswith(".XLN"))
+
+    def test_merged_drill_is_used_alone(self, tmp_path):
+        src = self._plant(tmp_path / "g", ["b.drl"])
+        result = pack_for_jlcpcb(src, src, tmp_path / "o.zip", project_name="b")
+        assert self._xln(result.zip_path) == ["b.XLN"]
+
+    def test_both_files_ship_when_only_a_split_pair_exists(self, tmp_path):
+        src = self._plant(tmp_path / "g", ["b-PTH.drl", "b-NPTH.drl"])
+        result = pack_for_jlcpcb(src, src, tmp_path / "o.zip", project_name="b")
+        assert self._xln(result.zip_path) == ["b-NPTH.XLN", "b-PTH.XLN"]
+
+    def test_the_plated_holes_are_never_the_ones_dropped(self, tmp_path):
+        """The specific regression: NPTH sorts first alphabetically."""
+        src = self._plant(tmp_path / "g", ["b-PTH.drl", "b-NPTH.drl"])
+        result = pack_for_jlcpcb(src, src, tmp_path / "o.zip", project_name="b")
+        assert any(n.endswith("-PTH.XLN") for n in self._xln(result.zip_path))
+
+    def test_a_split_pair_is_reported_not_silently_accepted(self, tmp_path):
+        src = self._plant(tmp_path / "g", ["b-PTH.drl", "b-NPTH.drl"])
+        result = pack_for_jlcpcb(src, src, tmp_path / "o.zip", project_name="b")
+        joined = " ".join(result.warnings)
+        assert "split drill files" in joined
+        assert "shipped both" in joined
+
+    def test_a_merged_file_wins_over_a_split_pair(self, tmp_path):
+        src = self._plant(tmp_path / "g", ["b.drl", "b-PTH.drl", "b-NPTH.drl"])
+        result = pack_for_jlcpcb(src, src, tmp_path / "o.zip", project_name="b")
+        assert self._xln(result.zip_path) == ["b.XLN"]
+
+    def test_no_drill_at_all_is_an_explicit_warning(self, tmp_path):
+        src = self._plant(tmp_path / "g", [])
+        result = pack_for_jlcpcb(src, src, tmp_path / "o.zip", project_name="b")
+        assert any("drill" in w.lower() for w in result.warnings)
