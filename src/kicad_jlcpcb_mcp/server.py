@@ -294,6 +294,17 @@ class KicadJlcpcbServer:
                 "The plugin stops at 'wired .kicad_pcb' because EasyEDA's "
                 "routing is more reliable than anything we could ship headlessly."
             ),
+            "before_you_order": [
+                "Check any warnings from fetch_part_library: a placeholder "
+                "footprint does NOT match the real part and must be replaced "
+                "from KiCad's standard libraries.",
+                "Check JLCPCB's assembly preview after upload. Rotations are "
+                "passed through from the board, and JLCPCB's expected "
+                "orientation differs from KiCad's for some packages.",
+                "Confirm the board's layer count matches what you ordered. "
+                "package_for_jlcpcb warns if a copper layer did not make it "
+                "into the zip.",
+            ],
             "alternative": (
                 "If you'd rather stay in KiCad, open the .kicad_pcb in "
                 "KiCad's Pcbnew, route the traces yourself (manual push-and-"

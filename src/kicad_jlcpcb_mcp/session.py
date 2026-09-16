@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, TypedDict
@@ -128,7 +129,20 @@ def save_session(session: Session) -> Path:
     session.setdefault("schema_version", _SCHEMA_VERSION)
     path = _session_path(session["project_path"])
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(session, indent=2))
+
+    # Write to a sibling temp file and rename over the original. A partial
+    # write leaves unparseable JSON, and `load_session` treats that as "no
+    # session" — so an interruption mid-save silently discards the whole
+    # workflow, including a BOM the user already approved. os.replace is
+    # atomic on POSIX and Windows when both paths are on one filesystem,
+    # which a sibling always is.
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(session, indent=2))
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
     return path
 
 

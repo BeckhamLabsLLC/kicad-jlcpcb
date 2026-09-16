@@ -1,0 +1,24 @@
+# Optional but recommended: `pip install pre-commit && pre-commit install`.
+# Runs the same ruff version CI pins, so a green commit is a green build.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # KiCad's own file formats are generated, not hand-edited.
+        exclude: '\.(kicad_pcb|kicad_sch|kicad_pro|kicad_mod|kicad_sym)$'
+      - id: end-of-file-fixer
+        exclude: '\.(kicad_pcb|kicad_sch|kicad_pro|kicad_mod|kicad_sym)$'
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]

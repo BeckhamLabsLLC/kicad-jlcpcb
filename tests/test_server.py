@@ -112,6 +112,23 @@ class TestAllPhase1ToolsListed:
         assert names == self.EXPECTED
 
 
+class TestHandoffStatesTheChecks:
+    """The handoff is the last thing the user reads before spending money,
+    so the three things that can silently produce a wrong board belong in
+    it rather than only in a warnings array they may have scrolled past."""
+
+    @pytest.mark.asyncio
+    async def test_lists_what_to_check_before_ordering(self, server, tmp_path):
+        await server._handle_tool("create_project", {"parent_dir": str(tmp_path), "name": "demo"})
+        pcb = tmp_path / "demo" / "demo.kicad_pcb"
+        pcb.write_text("(kicad_pcb)")
+        result = await server._handle_tool("easyeda_handoff", {})
+        joined = " ".join(result["before_you_order"]).lower()
+        assert "placeholder footprint" in joined
+        assert "assembly preview" in joined
+        assert "layer" in joined
+
+
 class TestEasyedaHandoff:
     @pytest.mark.asyncio
     async def test_requires_pcb_file(self, server, tmp_path):

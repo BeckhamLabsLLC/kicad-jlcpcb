@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- Session writes are atomic. They used a plain `write_text`, so an
+  interruption mid-save left unparseable JSON — and `load_session` treats
+  unparseable as "no session", silently discarding the whole workflow
+  including a BOM the user had already approved.
+
+### Added
+- `easyeda_handoff` now returns `before_you_order`: the three things that can
+  silently produce a wrong board (a placeholder footprint, uncorrected CPL
+  rotation, a missing copper layer). It is the last thing the user reads
+  before spending money, so they belong there and not only in a `warnings`
+  array that may have scrolled past.
+- `.editorconfig` and an optional `.pre-commit-config.yaml` pinned to the same
+  ruff version CI uses, so a green commit is a green build.
+
 ## [0.9.0] - 2026-09-16
 
 ### Fixed

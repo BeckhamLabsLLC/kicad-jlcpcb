@@ -1,7 +1,10 @@
 """Tests for per-project session persistence."""
 
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 from kicad_jlcpcb_mcp.session import (
     SESSION_FILENAME,
@@ -163,3 +166,44 @@ class TestResumeSummary:
         sess: Session = {"stage": "bogus_stage"}  # type: ignore[typeddict-item]
         summary = resume_summary(sess)
         assert "Unknown stage" in summary["next_step"]
+
+
+class TestAtomicWrites:
+    """A partial write leaves unparseable JSON, which `load_session` treats
+    as "no session" — so an interruption mid-save silently discards the
+    whole workflow, including a BOM the user already approved."""
+
+    def test_no_temp_files_are_left_behind(self, tmp_path):
+        save_session(new_session(tmp_path, "demo"))
+        assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
+
+    def test_an_existing_session_survives_a_failed_write(self, tmp_path, monkeypatch):
+        sess = new_session(tmp_path, "demo")
+        sess["notes"] = "original"
+        save_session(sess)
+
+        def boom(src, dst):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(os, "replace", boom)
+        sess["notes"] = "clobbered"
+        with pytest.raises(OSError):
+            save_session(sess)
+        monkeypatch.undo()
+
+        reloaded = load_session(tmp_path)
+        assert reloaded is not None, "a failed write must not destroy the session"
+        assert reloaded["notes"] == "original"
+
+    def test_the_temp_file_is_cleaned_up_after_a_failure(self, tmp_path, monkeypatch):
+        sess = new_session(tmp_path, "demo")
+        save_session(sess)
+
+        def boom(src, dst):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(os, "replace", boom)
+        with pytest.raises(OSError):
+            save_session(sess)
+        monkeypatch.undo()
+        assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
