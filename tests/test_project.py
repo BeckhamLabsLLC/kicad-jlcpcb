@@ -1,6 +1,7 @@
 """Tests for project workspace management."""
 
 import json
+import logging
 
 import pytest
 
@@ -99,12 +100,39 @@ class TestLoadProject:
         with pytest.raises(ProjectError, match="not valid JSON"):
             load_project(d / "broken.kicad_pro")
 
-    def test_rejects_too_new_schema(self, tmp_path):
+    def test_loads_kicad_9_and_10_projects(self, tmp_path):
+        """KiCad 9 and 10 both write meta.version 3.
+
+        An earlier release refused anything above 2, so every project
+        KiCad had ever saved failed to load with "Upgrade the plugin."
+        """
+        d = tmp_path / "modern"
+        d.mkdir()
+        (d / "modern.kicad_pro").write_text(
+            json.dumps({"meta": {"filename": "modern.kicad_pro", "version": 3}})
+        )
+        assert load_project(d).name == "modern"
+
+    def test_newer_schema_warns_but_still_loads(self, tmp_path, caplog):
+        """A .kicad_pro is plain JSON and we read only long-stable keys, so
+        a future schema is not a reason to lock a user out of their work."""
         d = tmp_path / "future"
         d.mkdir()
         (d / "f.kicad_pro").write_text(json.dumps({"meta": {"version": 999}}))
-        with pytest.raises(ProjectError, match="schema version 999"):
-            load_project(d / "f.kicad_pro")
+        with caplog.at_level(logging.WARNING):
+            assert load_project(d / "f.kicad_pro").name == "f"
+        assert "999" in caplog.text
+
+    def test_created_project_round_trips_through_kicad(self, tmp_path):
+        """create -> KiCad opens and saves (bumping the schema) -> reload.
+
+        We emit the same meta.version KiCad 9/10 write, so a save in KiCad
+        does not change it and the project stays loadable.
+        """
+        proj = create_project(tmp_path, "roundtrip")
+        manifest = json.loads(proj.pro_path.read_text())
+        assert manifest["meta"]["version"] == 3
+        assert load_project(proj.root).name == "roundtrip"
 
     def test_creates_missing_libs_and_manufacturing(self, tmp_path):
         # Simulate a project created by KiCad itself, without our subdirs

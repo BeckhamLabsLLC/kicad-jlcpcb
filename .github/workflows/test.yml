@@ -1,10 +1,11 @@
 name: tests
 
 on:
+  # Deliberately unfiltered: a fork working on its own branch should get
+  # CI too, not silence until it opens a PR against main.
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:

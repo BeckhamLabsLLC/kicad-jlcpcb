@@ -12,7 +12,7 @@ Quick-reference for failure modes the skill is likely to encounter. For the full
 
 - `lcsc_resolve_bom` has unresolved rows → ask the user for substitutions; don't silently pick a different part.
 - Every search result is extended-tier → loosen the query (drop tolerance spec, widen package options) and try again; if still extended-only, proceed but surface the setup-fee cost to the user as part of the BOM checkpoint.
-- `lcsc_search` returns zero results on a reasonable query → suggest refreshing the cache (`rm ~/.cache/kicad-jlcpcb/lcsc.sqlite` and retry).
+- `lcsc_search` returns zero results on a reasonable query → drop a word or two (upstream AND-matches every word), or retry with `basic_only=false`. If every query is empty, upstream is down: `rm ~/.cache/kicad-jlcpcb/lcsc_parts.sqlite` and retry, then check the contract tests.
 
 ## EasyEDA pin maps
 

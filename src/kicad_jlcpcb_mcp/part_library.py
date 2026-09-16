@@ -12,9 +12,9 @@ a minimal fetcher that:
 
 EasyEDA's component data is the canonical source for JLCPCB-stocked
 parts because EasyEDA, LCSC, and JLCPCB share a parent company. The
-endpoint we use is intentionally narrow and version-pinned in
-`config.JLCSEARCH_BASE` so a single change of base URL recovers if it
-ever moves.
+endpoint we use is intentionally narrow and its base URL lives in
+`config.EASYEDA_BASE` (override with `KJLC_EASYEDA_BASE`) so a single
+change recovers if it ever moves.
 
 This module deliberately produces *correct enough* KiCad files rather
 than perfect ones. KiCad will open them, the user can review/edit, and
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # Rate-limited to roughly 1 request/minute per IP after the first burst.
 # We enforce client-side throttling via a last-hit timestamp and cache
 # responses in SQLite so each unique C-number is fetched exactly once.
-EASYEDA_COMPONENT_URL = "https://easyeda.com/api/products/{lcsc}/components"
+EASYEDA_COMPONENT_URL = config.EASYEDA_BASE + "/api/products/{lcsc}/components"
 
 EASYEDA_HEADERS = {
     "Accept-Encoding": "gzip, deflate",

@@ -3,7 +3,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](#requirements)
 [![KiCad 8+](https://img.shields.io/badge/kicad-8.0%2B-informational.svg)](https://www.kicad.org/)
-[![Tests](https://img.shields.io/badge/tests-212%20passing-brightgreen.svg)](#testing)
+[![tests](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/actions/workflows/test.yml/badge.svg)](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/actions/workflows/test.yml)
+[![upstream contract](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/actions/workflows/contract.yml/badge.svg)](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/actions/workflows/contract.yml)
 [![MCP](https://img.shields.io/badge/MCP-server-8A2BE2.svg)](https://modelcontextprotocol.io/)
 
 > From "I want a board that does X" to a wired `.kicad_pcb` EasyEDA can auto-route and JLCPCB can build — in a single Claude Code conversation.
@@ -37,7 +38,7 @@
 
 Three recurring friction points in small-batch PCB work, automated:
 
-1. **"Is this part basic or extended on JLCPCB?"** — You stop needing to cross-reference LCSC's UI. The plugin's SQLite-cached jlcparts mirror answers in milliseconds and always prefers basic-tier (no $3/part assembly setup fee).
+1. **"Is this part basic or extended on JLCPCB?"** — You stop needing to cross-reference LCSC's UI. The plugin queries the JLCPCB catalog directly, caches the answer, and always prefers basic-tier (no $3/part assembly setup fee).
 2. **"What's the right pad number for this IC's `GPIO10`?"** — You stop reading datasheets to build netlists. The plugin queries EasyEDA by LCSC C-number, caches the pin-name → pad-number map, and lets you reference pins by their functional names.
 3. **"Why is my auto-router failing?"** — You stop fighting Freerouting on RF boards. The plugin stops at "wired `.kicad_pcb`" and hands off to EasyEDA's cloud auto-router, which works on real designs.
 
@@ -57,9 +58,30 @@ Three recurring friction points in small-batch PCB work, automated:
 
 | Component | Version | Notes |
 |---|---|---|
-| Python | 3.10 – 3.13 | Tested on all four |
-| KiCad | 8.0+ | `kicad-cli` on `PATH`, `pcbnew` Python bindings for `pcb_generate` |
+| Python | 3.10 – 3.13 | Tested on all four in CI |
+| KiCad | 8.0 – 10.x | `kicad-cli` on `PATH`, `pcbnew` Python bindings for `pcb_generate`. KiCad 11 removed the SWIG bindings — see [TROUBLESHOOTING](TROUBLESHOOTING.md) |
 | EasyEDA account | free | Only needed for the final routing + ordering step |
+| Network | required | Part data is fetched live — see below |
+
+### Data dependencies
+
+Part sourcing depends on two **third-party, unofficial** services. Neither is
+run by JLCPCB, and neither is run by us. Both are overridable, so a fork can
+point at a mirror without touching code:
+
+| Service | Used for | Override |
+|---|---|---|
+| [`jlcsearch.tscircuit.com`](https://github.com/tscircuit/jlcsearch) | Catalog search, JLCPCB stock, basic/extended tier | `KJLC_JLCSEARCH_BASE` |
+| `easyeda.com` | Exact C-number lookup, symbols, pin maps | `KJLC_EASYEDA_BASE` |
+
+Resolved parts are cached in `~/.cache/kicad-jlcpcb/lcsc_parts.sqlite` for 24
+hours. There is no bulk catalog download.
+
+> **Why the overrides exist.** v0.1.0 hardcoded a single third-party URL. Upstream
+> retired that data layout, the URL started returning 404, and part sourcing
+> broke silently for months before anyone noticed
+> ([#1](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/issues/1)). A weekly CI job
+> now tests both services directly, and you can repoint either one yourself.
 
 Install KiCad:
 
@@ -74,36 +96,63 @@ Install KiCad:
 
 Distributed via GitHub only — no PyPI, no marketplace. Clone and install locally.
 
-### 1. Clone + install (virtualenv recommended)
+### 1. Clone + install dependencies
 
 ```bash
 git clone https://github.com/BeckhamLabsLLC/kicad-jlcpcb.git
 cd kicad-jlcpcb
+pip install -e .
+```
+
+`.mcp.json` launches the server as `python3 -m kicad_jlcpcb_mcp` with
+`PYTHONPATH` pointed at this checkout, so the plugin itself does not need to be
+on your `PATH`. The install above is only there to pull in its two
+dependencies (`mcp`, `httpx`).
+
+<details>
+<summary>Prefer an isolated virtualenv?</summary>
+
+```bash
 python -m venv .venv
 source .venv/bin/activate     # Windows: .\.venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-The editable install puts a `kicad-jlcpcb` entry-point script in the venv's `bin/`. `.mcp.json` calls that script directly; if the venv isn't active when Claude Code launches, point `.mcp.json` at the absolute path:
+Then point `.mcp.json` at that interpreter so Claude Code finds the
+dependencies regardless of which shell it was launched from:
 
 ```json
 {
   "mcpServers": {
     "kicad-jlcpcb": {
-      "command": "/abs/path/to/kicad-jlcpcb/.venv/bin/kicad-jlcpcb",
-      "args": []
+      "command": "/abs/path/to/kicad-jlcpcb/.venv/bin/python",
+      "args": ["-m", "kicad_jlcpcb_mcp"],
+      "env": { "PYTHONPATH": "/abs/path/to/kicad-jlcpcb/src" }
     }
   }
 }
 ```
 
-If you'd rather install into your user Python without a venv, substitute `pip install -e .` after `cd kicad-jlcpcb` and skip the venv lines. The entry-point lands in `~/.local/bin` instead.
+With `uv`, no install step is needed at all:
+
+```json
+{
+  "mcpServers": {
+    "kicad-jlcpcb": {
+      "command": "uv",
+      "args": ["run", "--directory", "${CLAUDE_PLUGIN_ROOT}", "kicad-jlcpcb"]
+    }
+  }
+}
+```
+
+</details>
 
 ### 2. Register with Claude Code
 
 ```
 /plugin marketplace add /abs/path/to/kicad-jlcpcb
-/plugin install kicad-jlcpcb@local
+/plugin install kicad-jlcpcb@beckhamlabs
 ```
 
 Restart Claude Code so the MCP server registers.
@@ -111,8 +160,13 @@ Restart Claude Code so the MCP server registers.
 ### 3. Sanity check
 
 ```bash
-kicad-jlcpcb --help     # should print nothing (MCP servers speak JSON-RPC on stdio), exit 0
+python3 -m kicad_jlcpcb_mcp --version    # prints the version, exits 0
 ```
+
+Run it with no arguments and it will appear to hang — that is correct. An MCP
+server speaks JSON-RPC on stdio and is waiting for a client.
+
+To confirm Claude Code sees it, run `/mcp` and look for `kicad-jlcpcb`.
 
 ---
 
@@ -131,7 +185,7 @@ Claude walks you through:
 1. `detect_kicad` — verify the toolchain (< 1 s)
 2. `create_project` — scaffold `.kicad_pro` + `.kicad_sch` + session file
 3. Decomposes the description into ~12 generic part specs
-4. `lcsc_search` per spec (first run populates the 17 MB jlcparts cache)
+4. `lcsc_search` per spec (live catalog query, cached locally for 24 h)
 5. **BOM checkpoint** — shows every resolved part, flags extended-tier ones with cost warnings, and waits for your confirmation
 6. `pcb_generate` — fetches EasyEDA pin maps (~12 s per unique IC, first run only), places footprints, wires nets, saves `.kicad_pcb`
 7. `easyeda_handoff` — prints the import instructions
@@ -218,7 +272,7 @@ src/kicad_jlcpcb_mcp/
   session.py        ← per-project state (.kicad_jlcpcb_session.json)
   project.py        ← .kicad_pro create / load / validate
   kicad_cli.py      ← async wrapper for kicad-cli (KiCad 8/9)
-  lcsc_client.py    ← jlcparts mirror + SQLite cache + basic-tier filter
+  lcsc_client.py    ← jlcsearch + EasyEDA lookup, SQLite cache, basic-tier filter
   part_library.py   ← EasyEDA client (EasyEdaRateLimiter + pin-map cache)
   pcb.py            ← pcbnew-based .kicad_pcb generator
   schematic.py      ← netlist spec → .kicad_sch
@@ -234,16 +288,28 @@ All HTTP goes through `lcsc_client` and `part_library`. All KiCad CLI invocation
 ## Testing
 
 ```bash
-PYTHONPATH=src pytest tests/           # 212 tests (6 skipped without KiCad)
+pytest tests/       # offline suite; nothing here touches the network
 ```
 
-With KiCad's `pcbnew` bindings available:
+Two suites are gated behind environment variables because they need something
+the default run can't assume:
 
 ```bash
-KICAD_INSTALLED=1 PYTHONPATH=src pytest tests/ -v   # runs integration suite too
+KICAD_INSTALLED=1 pytest tests/ -v                          # needs pcbnew
+KJLC_NETWORK_TESTS=1 pytest tests/test_network_contract.py  # hits live APIs
 ```
 
-Coverage spans subprocess wrapping, HTTP mocking, SQLite cache, s-expression round-trip, schematic emission, Gerber renaming, EasyEDA pin-map parsing, rate-limit / retry, session persistence, MCP tool routing, and real `pcbnew` board generation.
+The offline suite covers subprocess wrapping, HTTP mocking, the SQLite cache,
+s-expression round-trip, schematic emission, Gerber renaming, EasyEDA pin-map
+parsing, rate-limit / retry, session persistence, MCP tool routing, and real
+`pcbnew` board generation.
+
+**`test_network_contract.py` earns its own paragraph.** Every other test is
+mocked, which is why the whole suite stayed green for four months while part
+sourcing was completely broken in the field. The contract tests assert the
+*shape* of live upstream responses — never a specific price or stock figure —
+and run weekly in CI. If that badge goes red, part sourcing is broken for
+everyone; please open an issue.
 
 Lint:
 

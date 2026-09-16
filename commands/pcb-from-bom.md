@@ -38,7 +38,7 @@ Convert each row into a `{lcsc, qty}` dict.
 
 ### 3. Resolve the BOM
 
-Call `lcsc_resolve_bom` with the rows. Validates every C-number against the live jlcparts mirror and catches any out-of-stock or discontinued parts.
+Call `lcsc_resolve_bom` with the rows. Validates every C-number against the live catalog and catches any out-of-stock or discontinued parts.
 
 ### 4. **CHECKPOINT — present the BOM**
 

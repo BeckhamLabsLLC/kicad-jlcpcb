@@ -17,22 +17,22 @@ After the editable install the `kicad-jlcpcb` entry-point script is on your `PAT
 ## Running tests
 
 ```bash
-PYTHONPATH=src pytest tests/
+pytest tests/
 ```
 
-The `PYTHONPATH=src` is required because the tests import from `kicad_jlcpcb_mcp` and the source lives under `src/` (a deliberate layout choice).
+`pyproject.toml` sets `pythonpath = ["src"]`, so `pytest` works from a clean checkout with no environment fiddling.
 
 Tests that talk to KiCad's `pcbnew` Python module are gated behind an env var:
 
 ```bash
-KICAD_INSTALLED=1 PYTHONPATH=src pytest tests/ -v
+KICAD_INSTALLED=1 pytest tests/ -v
 ```
 
 Run a single file or test:
 
 ```bash
-PYTHONPATH=src pytest tests/test_schematic.py -v
-PYTHONPATH=src pytest tests/test_pcb.py::test_place_components -v
+pytest tests/test_schematic.py -v
+pytest tests/test_pcb.py::TestPlace::test_three_band_layout -v
 ```
 
 ## Code style
@@ -67,7 +67,7 @@ Checklist:
 
 - [ ] Tests added or updated for any behaviour change
 - [ ] `ruff check .` and `ruff format --check .` pass
-- [ ] Full test suite passes (`PYTHONPATH=src pytest tests/`)
+- [ ] Full test suite passes (`pytest tests/`)
 - [ ] If the change is user-facing, `README.md` is updated
 - [ ] An entry is added to `CHANGELOG.md` under `[Unreleased]`
 - [ ] Manually exercised the affected flow (especially for PCB generation changes)

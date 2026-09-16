@@ -59,7 +59,7 @@ Claude works out the bill of materials from the description:
 
 ## Step 4 — Source parts (~5 s, cold cache ~60 s)
 
-Claude runs parallel `lcsc_search` calls, one per generic spec. Each returns the top 3 picks. On first run, it also populates the jlcparts catalog — expect a ~60 second pause while ~17 MB of data is fetched into `~/.cache/kicad-jlcpcb/lcsc.sqlite`.
+Claude runs parallel `lcsc_search` calls, one per generic spec. Each returns the top 3 picks. On first run each unique part costs one HTTP round trip; results are cached locally for 24 hours.
 
 ## Step 5 — BOM checkpoint (requires your confirmation)
 

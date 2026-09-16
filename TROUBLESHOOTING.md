@@ -40,21 +40,67 @@ The plugin requires KiCad 8.0 or newer. Upgrade:
 
 ---
 
-## Part sourcing (LCSC / jlcparts)
+## Part sourcing (LCSC / JLCPCB)
 
-### First-run cache population takes minutes
+### Where part data comes from
 
-The plugin downloads the full jlcparts catalog (~17 MB across ~1300 category files) on first use. It caches everything in `~/.cache/kicad-jlcpcb/` and refreshes every 7 days. Subsequent queries are instant.
+Two live services, neither official, both overridable:
 
-If the download stalls, check network connectivity. The plugin uses parallel fetches (concurrency 16) and tolerates individual category failures.
+| Service | Used for | Override |
+|---|---|---|
+| `jlcsearch.tscircuit.com` | Catalog search, JLCPCB stock, basic/extended tier | `KJLC_JLCSEARCH_BASE` |
+| `easyeda.com` | Exact C-number lookup, symbols, pin maps | `KJLC_EASYEDA_BASE` |
+
+Results are cached per-part in `~/.cache/kicad-jlcpcb/lcsc_parts.sqlite` for
+24 hours. There is no bulk catalog download — the first query costs one HTTP
+round trip.
+
+### `lcsc_search` returns nothing
+
+1. Check the services are up:
+   ```bash
+   KJLC_NETWORK_TESTS=1 pytest tests/test_network_contract.py -v
+   ```
+   If these fail, part sourcing is broken for everyone, not just you —
+   please [open an issue](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/issues).
+2. Loosen the query. Upstream AND-matches every word, so
+   `basic_only=false` and fewer terms both help. The client already drops
+   the least-matchable words and retries, but it will not narrow a
+   five-word query below three words — one leftover word matches half the
+   catalog, and a wrong part is worse than no part.
+3. For a resistor or capacitor, put the value and the chip size in the
+   query (`10k 0603`, `0.1uF 0402`). Those route to a structured lookup
+   that filters on the parsed value, which is far more accurate than text
+   search. `0.1uF` and `100nF` are treated as the same part.
+
+### Stock shows as 0 with a warning
+
+A part resolved by exact C-number comes from EasyEDA, which reports LCSC
+*retail* stock rather than JLCPCB SMT inventory — it reads 0 for parts with
+millions in stock. The plugin flags these rather than printing a misleading
+number. It tries to backfill real stock from jlcsearch, which works when the
+part is text-searchable; some passives with empty upstream descriptions
+aren't. Confirm on jlcpcb.com before ordering.
+
+### Stale prices or stock
+
+Delete the cache to force a refetch:
+
+```bash
+rm ~/.cache/kicad-jlcpcb/lcsc_parts.sqlite
+```
+
+Or pass `force_refresh: true` to `lcsc_search` / `lcsc_resolve_bom`.
 
 ### `lcsc_resolve_bom` says a C-number is not found
 
-The jlcparts mirror is community-maintained and occasionally trails the live LCSC catalog by a few days. Options:
+Exact C-numbers resolve through EasyEDA. If it 404s for a part that exists:
 
-- Use `lcsc_search` to find an alternative.
-- Force a fresh download by deleting `~/.cache/kicad-jlcpcb/lcsc.sqlite`.
-- If the part truly doesn't exist, double-check the C-number on LCSC's site.
+- Confirm the C-number on LCSC's site — a transposed digit is the usual cause.
+- EasyEDA rate-limits aggressively. The plugin throttles to one request per
+  12 seconds and backs off for 60 s on a 403, so a large BOM takes a few
+  minutes to warm on first run. That is expected, not a hang.
+- Use `lcsc_search` to find an equivalent part instead.
 
 ### Every result is extended-tier
 
@@ -170,19 +216,31 @@ Most common causes:
 
 ### `ModuleNotFoundError: No module named 'kicad_jlcpcb_mcp'`
 
-Run pytest with `PYTHONPATH=src`:
+Run pytest from the repo root — `pyproject.toml` sets `pythonpath = ["src"]`:
 
 ```bash
-PYTHONPATH=src pytest tests/
+pytest tests/
 ```
+
+If you invoke it from elsewhere, install the package first with `pip install -e .`.
 
 ### Integration tests skip
 
 The `pcbnew`-dependent tests are gated by `KICAD_INSTALLED=1`:
 
 ```bash
-KICAD_INSTALLED=1 PYTHONPATH=src pytest tests/test_pcb.py -v
+KICAD_INSTALLED=1 pytest tests/test_pcb.py -v
 ```
+
+The live upstream contract tests are gated separately, because they hit the
+network:
+
+```bash
+KJLC_NETWORK_TESTS=1 pytest tests/test_network_contract.py -v
+```
+
+Run those if part sourcing is misbehaving — they check the two upstream APIs
+directly and will tell you whether the problem is upstream or in the plugin.
 
 ---
 

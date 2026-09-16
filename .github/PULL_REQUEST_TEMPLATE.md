@@ -8,8 +8,8 @@ Why this change matters — the bug it fixes, the workflow it enables, or the cl
 
 ## Testing
 
-- [ ] `PYTHONPATH=src pytest tests/` passes
-- [ ] `KICAD_INSTALLED=1 PYTHONPATH=src pytest tests/` passes (if you have KiCad)
+- [ ] `pytest tests/` passes
+- [ ] `KICAD_INSTALLED=1 pytest tests/` passes (if you have KiCad)
 - [ ] `ruff check .` clean
 - [ ] `ruff format --check .` clean
 - [ ] Manually exercised the affected flow (especially for PCB generation changes)

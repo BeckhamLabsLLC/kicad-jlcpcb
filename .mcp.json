@@ -1,8 +1,11 @@
 {
   "mcpServers": {
     "kicad-jlcpcb": {
-      "command": "kicad-jlcpcb",
-      "args": []
+      "command": "python3",
+      "args": ["-m", "kicad_jlcpcb_mcp"],
+      "env": {
+        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src"
+      }
     }
   }
 }

@@ -24,9 +24,20 @@ from . import config
 
 logger = logging.getLogger(__name__)
 
-# KiCad project manifest schema version. KiCad 8/9 use schema 1.
-# We pin this so we can detect future incompatibilities at load time.
-_PROJECT_SCHEMA_VERSION = 1
+# The `meta.version` we write into a new .kicad_pro. KiCad 9 and 10 both
+# write 3, so we match them: a project we create, the user opens in KiCad,
+# and KiCad saves, round-trips without its schema version changing.
+#
+# This is an *output* value only. It is deliberately not used to gate
+# loading — see `load_project`. An earlier release rejected any manifest
+# newer than 2, which meant every project KiCad 9 or 10 had ever saved
+# failed to load with "Upgrade the plugin."
+_PROJECT_SCHEMA_VERSION = 3
+
+# Schema versions we have actually seen and read successfully. A manifest
+# above this still loads; we just note it, because the fields we read
+# (`meta`, `board.design_settings.rules`) have been stable for years.
+_PROJECT_SCHEMA_KNOWN_MAX = 3
 
 # Filename validation: KiCad allows most printable chars in project names,
 # but we lock down to a safe subset to avoid path-injection and to keep
@@ -221,11 +232,17 @@ def load_project(project_path: str | Path) -> Project:
         raise ProjectError(f"{pro_path} is not valid JSON: {e}") from e
 
     schema = manifest.get("meta", {}).get("version")
-    if schema is not None and schema > _PROJECT_SCHEMA_VERSION + 1:
-        # Allow current + 1 for forward compat; reject anything wildly newer.
-        raise ProjectError(
-            f"{pro_path} uses schema version {schema}; this plugin supports "
-            f"up to {_PROJECT_SCHEMA_VERSION + 1}. Upgrade the plugin."
+    if isinstance(schema, int) and schema > _PROJECT_SCHEMA_KNOWN_MAX:
+        # Note it, don't refuse it. A .kicad_pro is plain JSON and we read
+        # only a couple of long-stable keys, so a newer schema is not a
+        # reason to lock the user out of their own project.
+        logger.warning(
+            "%s uses KiCad project schema %d, newer than the %d this plugin "
+            "was tested against. Loading anyway; report anything that looks "
+            "wrong at https://github.com/BeckhamLabsLLC/kicad-jlcpcb/issues",
+            pro_path,
+            schema,
+            _PROJECT_SCHEMA_KNOWN_MAX,
         )
 
     name = pro_path.stem

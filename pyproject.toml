@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kicad-jlcpcb"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server that generates JLCPCB-ready KiCad PCB projects from descriptions, BOMs, or existing KiCad projects"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -77,6 +77,9 @@ include = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Makes `pytest` work from a clean checkout without PYTHONPATH=src, which
+# every doc in this repo previously had to chant.
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100

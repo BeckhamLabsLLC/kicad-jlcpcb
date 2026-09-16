@@ -1,0 +1,24 @@
+{
+  "name": "beckhamlabs",
+  "owner": {
+    "name": "BeckhamLabs",
+    "url": "https://github.com/BeckhamLabsLLC"
+  },
+  "metadata": {
+    "description": "Hardware and EDA tooling for Claude Code.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "kicad-jlcpcb",
+      "source": "./",
+      "description": "Turn a PCB idea into a wired .kicad_pcb ready for EasyEDA auto-routing and one-click JLCPCB ordering — LCSC part sourcing, EasyEDA pin-map auto-fetch, and session-persisted workflows.",
+      "version": "0.2.0",
+      "author": { "name": "BeckhamLabs", "url": "https://github.com/BeckhamLabsLLC" },
+      "homepage": "https://github.com/BeckhamLabsLLC/kicad-jlcpcb",
+      "license": "MIT",
+      "keywords": ["kicad", "jlcpcb", "lcsc", "pcb", "electronics", "hardware", "eda", "mcp"],
+      "category": "productivity"
+    }
+  ]
+}

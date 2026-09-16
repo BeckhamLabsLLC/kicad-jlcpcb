@@ -6,16 +6,46 @@ JLCPCB basic-tier parts, generates schematics, and packages routed boards
 into manufacturing zips ready to upload to JLCPCB.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
-def main() -> None:
+USAGE = """kicad-jlcpcb {version} — MCP server for KiCad + JLCPCB workflows
+
+This is a Model Context Protocol server, not an interactive CLI. Started
+with no arguments it speaks JSON-RPC over stdio and waits for a client, so
+running it by hand will appear to hang — that is correct behaviour.
+
+  --version    print the version and exit
+  --help, -h   print this message and exit
+
+Normal use is through Claude Code, which launches it via .mcp.json:
+
+  /plugin marketplace add /abs/path/to/kicad-jlcpcb
+  /plugin install kicad-jlcpcb@beckhamlabs
+
+Docs and issues: https://github.com/BeckhamLabsLLC/kicad-jlcpcb
+"""
+
+
+def main(argv: list[str] | None = None) -> None:
     """Entry point for the MCP server.
 
-    Performs a preflight dependency check so a misconfigured install fails
-    with a human-readable message instead of a silent ImportError that
-    Claude Code's MCP bootstrap sometimes swallows.
+    Handles --help/--version first so the documented install sanity check
+    exits instead of blocking on stdin, then performs a preflight
+    dependency check so a misconfigured install fails with a
+    human-readable message rather than a silent ImportError that Claude
+    Code's MCP bootstrap sometimes swallows.
     """
+    import sys
+
+    args = sys.argv[1:] if argv is None else argv
+    if "--version" in args:
+        print(__version__)
+        return
+    if "--help" in args or "-h" in args:
+        print(USAGE.format(version=__version__), end="")
+        return
+
     _preflight()
     from .server import main as _main
 
@@ -46,4 +76,4 @@ def _preflight() -> None:
         sys.exit(2)
 
 
-__all__ = ["main", "__version__"]
+__all__ = ["main", "__version__", "USAGE"]

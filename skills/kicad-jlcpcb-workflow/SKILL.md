@@ -151,6 +151,6 @@ The EasyEDA pin-name extraction is accurate but uses datasheet nomenclature, whi
 ## Reference docs
 
 - `references/jlcpcb-rules.md` — JLCPCB design rules, cost model, manufacturing file requirements
-- `references/lcsc-search.md` — How the jlcparts mirror and SQLite cache work
+- `references/lcsc-search.md` — Where part data comes from and how to write queries that find parts
 - `references/troubleshooting.md` — Quick reference for common runtime failure modes
 - Worked sample project: [`examples/soilnode-esp32/`](../../examples/soilnode-esp32/) in the repo root — full spec, BOM, and step-by-step walkthrough

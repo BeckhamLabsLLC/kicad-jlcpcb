@@ -1,0 +1,44 @@
+# Upstream part data comes from two third-party services we do not control.
+# Every other test in this repo is mocked and offline, which is why the
+# suite stayed green for four months while the plugin was completely broken
+# in the field (issue #1: upstream retired the data layout the client used).
+#
+# This job is the tripwire. If it goes red, part sourcing is broken for
+# every user — treat it as a production incident, not a flaky test.
+name: upstream contract
+
+on:
+  schedule:
+    # Mondays 06:00 UTC. Weekly is enough: an upstream API shape does not
+    # change hourly, and we do not want to hammer a free community mirror.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  push:
+    paths:
+      - "src/kicad_jlcpcb_mcp/lcsc_client.py"
+      - "src/kicad_jlcpcb_mcp/part_library.py"
+      - "src/kicad_jlcpcb_mcp/config.py"
+      - "tests/test_network_contract.py"
+      - ".github/workflows/contract.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Contract tests against live upstream
+        env:
+          KJLC_NETWORK_TESTS: "1"
+        run: pytest tests/test_network_contract.py -v --tb=short

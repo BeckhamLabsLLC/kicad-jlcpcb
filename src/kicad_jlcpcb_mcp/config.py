@@ -5,6 +5,7 @@ All module-level constants live here. Other modules import this module
 monkeypatch with `monkeypatch.setattr(config, "FOO", value)`.
 """
 
+import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -26,7 +27,9 @@ KICAD_CLI_CANDIDATES = ("kicad-cli",)
 # and any other intermediate state. Created on first use.
 CACHE_DIR = Path.home() / ".cache" / "kicad-jlcpcb"
 
-# SQLite filename inside CACHE_DIR for resolved LCSC parts.
+# SQLite filename inside CACHE_DIR for the resolved-part row cache.
+# Rows carry live stock figures and expire after a short TTL; see
+# lcsc_client.CACHE_TTL_SECONDS. There is no bulk catalog download.
 LCSC_CACHE_DB = "lcsc_parts.sqlite"
 
 # Subdirectory inside CACHE_DIR for downloaded LCSC component files
@@ -37,14 +40,24 @@ LCSC_LIB_CACHE = "lcsc_libs"
 # JLCPCB part sourcing
 # ---------------------------------------------------------------------------
 
-# Base URL for the jlcparts community mirror. Real data layout is:
-#   /data/index.json                       — category manifest
-#   /data/<sourcename>.json.gz             — per-category component dump
-#   /data/<sourcename>.stock.json          — per-category stock map
-# lcsc_client.populate_cache() downloads all categories on first use
-# (~17 MB total, ~1300 files) into a local SQLite cache; subsequent
-# queries are pure local SQL.
-JLCSEARCH_BASE = "https://yaqwsx.github.io/jlcparts"
+# Part data comes from two live services. Neither is an official JLCPCB
+# API; both are overridable so a fork can point at a self-hosted mirror
+# without editing code.
+#
+# This matters: the previous release hardcoded a single third-party URL
+# (the jlcparts GitHub Pages mirror). Upstream retired that data layout,
+# the URL started returning 404, and every part lookup broke silently for
+# months. Keep these overridable.
+#
+#   JLCSEARCH_BASE  — free-text catalog search, with JLCPCB SMT stock and
+#                     the basic/extended tier. Route: /components/list
+#   EASYEDA_BASE    — per-C-number lookup (the only source that supports
+#                     exact C-number resolution) and symbol/pin data.
+JLCSEARCH_BASE = os.environ.get("KJLC_JLCSEARCH_BASE", "https://jlcsearch.tscircuit.com").rstrip(
+    "/"
+)
+
+EASYEDA_BASE = os.environ.get("KJLC_EASYEDA_BASE", "https://easyeda.com").rstrip("/")
 
 # When sourcing parts, hard-prefer JLCPCB basic library (no setup fee).
 # Extended-tier parts are allowed but always warned with cost impact.
