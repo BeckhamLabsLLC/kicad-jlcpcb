@@ -694,3 +694,83 @@ class TestPinNameAliases:
     def test_gpio_prefix_only_folds_for_numeric_pins(self):
         assert _normalize_pin("GPIOCLK") == "gpioclk"
         assert _normalize_pin("GPIO10") == "io10"
+
+
+@pytest.mark.skipif(
+    os.environ.get("KICAD_INSTALLED") != "1",
+    reason="requires pcbnew and KiCad's footprint libraries",
+)
+class TestTheShippedExampleBuilds:
+    """The flagship example is the first thing a user runs and the thing the
+    README points at. It produced five unresolved pins and nothing noticed,
+    because no test ever fed `examples/soilnode-esp32/spec.json` to the
+    generator it is an example of.
+
+    Split deliberately: the structural checks run offline, and the
+    every-pin-resolves check needs EasyEDA, because the ESP32's pin names
+    are exactly what auto-fetch exists to supply.
+    """
+
+    @pytest.fixture
+    def spec(self):
+        import json
+
+        return json.loads(Path("examples/soilnode-esp32/spec.json").read_text())
+
+    @pytest.mark.asyncio
+    async def test_it_generates_a_board(self, spec, tmp_path):
+        result = await generate_pcb(spec, tmp_path / "soilnode.kicad_pcb", auto_fetch_pinmaps=False)
+        assert result.footprints_placed == len(spec["components"])
+        assert result.nets_created == len(spec["nets"])
+
+    @pytest.mark.asyncio
+    async def test_every_footprint_named_in_the_spec_exists_in_kicad(self, spec, tmp_path):
+        """A renamed KiCad library would break the example silently."""
+        result = await generate_pcb(spec, tmp_path / "soilnode.kicad_pcb", auto_fetch_pinmaps=False)
+        footprint_errors = [
+            e
+            for e in result.errors
+            if "ootprint library not found" in e or "ootprint not found" in e
+        ]
+        assert footprint_errors == [], footprint_errors
+
+    @pytest.mark.asyncio
+    async def test_nothing_lands_outside_the_outline(self, spec, tmp_path):
+        import pcbnew
+
+        out = tmp_path / "soilnode.kicad_pcb"
+        await generate_pcb(spec, out, auto_fetch_pinmaps=False)
+        board = pcbnew.LoadBoard(str(out))
+        w, h = spec["board"]["width_mm"], spec["board"]["height_mm"]
+        outside = [
+            fp.GetReference()
+            for fp in board.Footprints()
+            if not (
+                0 <= pcbnew.ToMM(fp.GetPosition().x) <= w
+                and 0 <= pcbnew.ToMM(fp.GetPosition().y) <= h
+            )
+        ]
+        assert outside == [], outside
+
+    @pytest.mark.skipif(
+        os.environ.get("KJLC_NETWORK_TESTS") != "1",
+        reason="the ESP32's pin names come from EasyEDA (set KJLC_NETWORK_TESTS=1)",
+    )
+    @pytest.mark.asyncio
+    async def test_it_builds_with_no_errors_at_all(self, spec, tmp_path):
+        """The regression that mattered: five pins did not resolve, and the
+        example the README points at did not build."""
+        result = await generate_pcb(spec, tmp_path / "soilnode.kicad_pcb")
+        assert result.errors == [], result.errors
+
+    @pytest.mark.skipif(
+        os.environ.get("KJLC_NETWORK_TESTS") != "1",
+        reason="needs EasyEDA pin maps (set KJLC_NETWORK_TESTS=1)",
+    )
+    @pytest.mark.asyncio
+    async def test_the_documented_single_pad_net_is_the_only_one(self, spec, tmp_path):
+        """VBAT is a deliberate 1-pad net, explained in the example's README.
+        Any *other* 1-pad net is a typo that slipped in."""
+        result = await generate_pcb(spec, tmp_path / "soilnode.kicad_pcb")
+        thin = {n for n, count in result.net_stats.items() if count < 2}
+        assert thin == {"VBAT"}, thin

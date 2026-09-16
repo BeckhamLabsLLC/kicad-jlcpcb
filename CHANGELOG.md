@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- A test that the shipped example actually builds. It produced five
+  unresolved pins and nothing noticed, because no test had ever fed
+  `examples/soilnode-esp32/spec.json` to the generator it is an example of.
+  Structural checks run offline; the every-pin-resolves check is gated on
+  `KJLC_NETWORK_TESTS=1`, since the ESP32's pin names are precisely what
+  auto-fetch exists to supply.
+
 ## [0.13.0] - 2026-09-16
 
 ### Fixed
