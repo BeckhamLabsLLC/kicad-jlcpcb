@@ -470,3 +470,45 @@ class TestExportOriginsAgreeOnARealBoard:
         # The footprint sits at x=10mm. Referenced to a 25mm aux origin it
         # would read -15mm.
         assert abs(x - 10.0) < 0.01, f"CPL x={x}, expected 10.0 (aux origin leaked in)"
+
+
+class TestStackupDetection:
+    """The `--layers` argument must match the board, not a fixed two-layer
+    assumption — that assumption is what dropped inner copper."""
+
+    def _board(self, tmp_path, layers):
+        p = tmp_path / "b.kicad_pcb"
+        body = "".join(f'    (0 "{n}" signal)\n' for n in layers)
+        p.write_text(f"(kicad_pcb\n  (layers\n{body}  )\n)\n")
+        return p
+
+    def test_two_layer(self, tmp_path):
+        b = self._board(tmp_path, ["F.Cu", "B.Cu"])
+        assert kicad_cli.detect_copper_layers(b) == ["F.Cu", "B.Cu"]
+
+    def test_four_layer_in_stackup_order(self, tmp_path):
+        b = self._board(tmp_path, ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"])
+        assert kicad_cli.detect_copper_layers(b) == ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]
+
+    def test_inner_layers_sort_numerically_not_lexically(self, tmp_path):
+        """In10 must not sort between In1 and In2."""
+        b = self._board(tmp_path, ["F.Cu", "In1.Cu", "In2.Cu", "In10.Cu", "B.Cu"])
+        assert kicad_cli.detect_copper_layers(b) == [
+            "F.Cu",
+            "In1.Cu",
+            "In2.Cu",
+            "In10.Cu",
+            "B.Cu",
+        ]
+
+    def test_unreadable_board_falls_back_to_two_layers(self, tmp_path):
+        assert kicad_cli.detect_copper_layers(tmp_path / "nope.kicad_pcb") == [
+            "F.Cu",
+            "B.Cu",
+        ]
+
+    def test_layers_argument_includes_inner_copper_and_the_usual_rest(self, tmp_path):
+        b = self._board(tmp_path, ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"])
+        arg = kicad_cli.gerber_layers_for(b)
+        assert "In1.Cu" in arg and "In2.Cu" in arg
+        assert "Edge.Cuts" in arg and "F.Mask" in arg

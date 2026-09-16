@@ -152,9 +152,13 @@ JLCPCB_GERBER_EXTENSIONS = {
     "F_Mask": "GTS",
     "B_Mask": "GBS",
     "Edge_Cuts": "GM1",
-    # Inner layers for 4-layer boards
-    "In1_Cu": "G2L",
-    "In2_Cu": "G3L",
+    # Inner copper. JLCPCB documents .G1/.G2 for a 4-layer stack, which is
+    # also what KiCad writes natively (`<stem>-In1_Cu.g1`), so the two line
+    # up with no renaming guesswork. Extended to six layers.
+    "In1_Cu": "G1",
+    "In2_Cu": "G2",
+    "In3_Cu": "G3",
+    "In4_Cu": "G4",
 }
 
 # Drill file extension JLCPCB expects (merged Excellon).

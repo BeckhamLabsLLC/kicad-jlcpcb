@@ -58,8 +58,10 @@ class PackResult:
 # We accept both and normalize to the JLCPCB Protel extension at pack time.
 _LAYER_SUFFIX_RE = re.compile(
     r"^(?P<stem>.+?)-(?P<layer>F_Cu|B_Cu|F_Paste|B_Paste|F_Silkscreen|B_Silkscreen|"
-    r"F_Mask|B_Mask|Edge_Cuts|In1_Cu|In2_Cu)\."
-    r"(?P<ext>gbr|gtl|gbl|gtp|gbp|gto|gbo|gts|gbs|gm1|g2l|g3l)$",
+    r"F_Mask|B_Mask|Edge_Cuts|In\d+_Cu)\."
+    # Inner copper comes out of KiCad as .g1/.g2/... — omitting those from
+    # this list silently dropped every inner layer from a 4-layer zip.
+    r"(?P<ext>gbr|gtl|gbl|gtp|gbp|gto|gbo|gts|gbs|gm1|g\d+)$",
     re.IGNORECASE,
 )
 

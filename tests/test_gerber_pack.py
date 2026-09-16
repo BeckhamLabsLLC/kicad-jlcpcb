@@ -50,7 +50,11 @@ class TestClassifyGerber:
         assert _classify_gerber("demo-Edge_Cuts.gbr") == ("demo", "GM1")
 
     def test_inner_layer(self):
-        assert _classify_gerber("demo-In1_Cu.gbr") == ("demo", "G2L")
+        # JLCPCB documents .G1/.G2 for a 4-layer stack, which is also what
+        # KiCad writes natively. The old mapping said "G2L" — a
+        # transposition of Altium's GL2 — which JLCPCB does not recognise.
+        assert _classify_gerber("demo-In1_Cu.gbr") == ("demo", "G1")
+        assert _classify_gerber("demo-In2_Cu.gbr") == ("demo", "G2")
 
     def test_unrecognized_returns_none(self):
         assert _classify_gerber("README.txt") is None
@@ -201,3 +205,63 @@ class TestDefaultZipPath:
         second = default_zip_path(tmp_path, "demo")
         assert second != first
         assert "-1" in second.name
+
+
+class TestMultilayerBoards:
+    """A 4-layer board used to ship with no inner copper at all.
+
+    Two independent causes: `package_for_jlcpcb` exported a fixed two-layer
+    set, and even when inner gerbers were present the filename matcher did
+    not accept KiCad's `.g1`/`.g2` extensions. The zip uploaded, the order
+    was accepted, and the board came back with every inner-layer net gone.
+    """
+
+    def _plant(self, d, stem, layers):
+        d.mkdir(parents=True, exist_ok=True)
+        for layer, ext in layers:
+            (d / f"{stem}-{layer}.{ext}").write_text("G04*\nM02*\n")
+        (d / f"{stem}.drl").write_text("M48\nM30\n")
+
+    FOUR_LAYER = [
+        ("F_Cu", "gtl"),
+        ("In1_Cu", "g1"),
+        ("In2_Cu", "g2"),
+        ("B_Cu", "gbl"),
+        ("F_Paste", "gtp"),
+        ("B_Paste", "gbp"),
+        ("F_Silkscreen", "gto"),
+        ("B_Silkscreen", "gbo"),
+        ("F_Mask", "gts"),
+        ("B_Mask", "gbs"),
+        ("Edge_Cuts", "gm1"),
+    ]
+
+    def test_inner_copper_reaches_the_zip(self, tmp_path):
+        import zipfile
+
+        src = tmp_path / "g"
+        self._plant(src, "board", self.FOUR_LAYER)
+        result = pack_for_jlcpcb(src, src, tmp_path / "out.zip", project_name="board")
+        names = set(zipfile.ZipFile(result.zip_path).namelist())
+        assert "board.G1" in names, "In1.Cu missing from a 4-layer zip"
+        assert "board.G2" in names, "In2.Cu missing from a 4-layer zip"
+
+    def test_kicad_g1_g2_extensions_are_recognised(self):
+        """KiCad writes `<stem>-In1_Cu.g1`, not `.g2l`."""
+        assert _classify_gerber("board-In1_Cu.g1") == ("board", "G1")
+        assert _classify_gerber("board-In2_Cu.g2") == ("board", "G2")
+
+    def test_six_layer_inner_copper(self):
+        assert _classify_gerber("board-In3_Cu.g3") == ("board", "G3")
+        assert _classify_gerber("board-In4_Cu.g4") == ("board", "G4")
+
+    def test_two_layer_board_is_unaffected(self, tmp_path):
+        import zipfile
+
+        two = [le for le in self.FOUR_LAYER if not le[0].startswith("In")]
+        src = tmp_path / "g"
+        self._plant(src, "board", two)
+        result = pack_for_jlcpcb(src, src, tmp_path / "out.zip", project_name="board")
+        names = set(zipfile.ZipFile(result.zip_path).namelist())
+        assert not any(n.endswith((".G1", ".G2")) for n in names)
+        assert "board.GTL" in names and "board.GBL" in names

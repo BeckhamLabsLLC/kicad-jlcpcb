@@ -396,8 +396,47 @@ def _parse_erc_report(text: str) -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 
 
-# Standard JLCPCB 2-layer Gerber layer set. For 4-layer boards callers
-# should pass layers= explicitly including In1.Cu, In2.Cu.
+# Non-copper layers every JLCPCB order needs, whatever the stackup.
+_NON_COPPER_LAYERS = (
+    "F.Paste",
+    "B.Paste",
+    "F.Silkscreen",
+    "B.Silkscreen",
+    "F.Mask",
+    "B.Mask",
+    "Edge.Cuts",
+)
+
+_COPPER_LAYER_RE = re.compile(r'"(In\d+)\.Cu"')
+
+
+def detect_copper_layers(pcb_path: str | Path) -> list[str]:
+    """Return the board's copper layers in stackup order.
+
+    Read from the file rather than assumed, because assuming cost inner
+    copper: `package_for_jlcpcb` exported a fixed two-layer set, so a
+    4-layer board shipped with In1.Cu and In2.Cu missing entirely — the
+    zip uploads, the order is accepted, and the board comes back with
+    every inner-layer net absent.
+    """
+    try:
+        text = Path(pcb_path).expanduser().read_text(errors="ignore")
+    except OSError:
+        return ["F.Cu", "B.Cu"]
+    inner = sorted(
+        {m.group(1) for m in _COPPER_LAYER_RE.finditer(text)},
+        key=lambda n: int(n[2:]),
+    )
+    return ["F.Cu", *(f"{n}.Cu" for n in inner), "B.Cu"]
+
+
+def gerber_layers_for(pcb_path: str | Path) -> str:
+    """Build the `--layers` argument matching a board's actual stackup."""
+    return ",".join([*detect_copper_layers(pcb_path), *_NON_COPPER_LAYERS])
+
+
+# Standard JLCPCB 2-layer Gerber layer set, kept as the fallback when a
+# board cannot be read. Prefer gerber_layers_for().
 STANDARD_GERBER_LAYERS_2L = (
     "F.Cu,B.Cu,F.Paste,B.Paste,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts"
 )
@@ -407,7 +446,7 @@ async def pcb_export_gerbers(
     pcb_path: str | Path,
     output_dir: str | Path,
     *,
-    layers: str = STANDARD_GERBER_LAYERS_2L,
+    layers: str | None = None,
 ) -> dict:
     """Export Gerber files for the specified layer set.
 
@@ -429,7 +468,7 @@ async def pcb_export_gerbers(
         "--output",
         str(out),
         "--layers",
-        layers,
+        layers if layers is not None else gerber_layers_for(pcb),
         "--no-x2",
         "--subtract-soldermask",
         str(pcb),

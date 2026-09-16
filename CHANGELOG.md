@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-16
+
+### Fixed
+- **4-layer boards shipped with no inner copper at all.** Two independent
+  causes, either of which alone was fatal: `package_for_jlcpcb` exported a
+  fixed two-layer set and never passed `--layers`, and the gerber filename
+  matcher didn't accept KiCad's `.g1`/`.g2` extensions for inner copper. So a
+  board generated with `layer_count: 4` produced a zip containing `In1.Cu` and
+  `In2.Cu` nowhere — it uploads, the order is accepted, and the board comes
+  back with every inner-layer net missing.
+
+  The copper stackup is now read from the board file and the export matches
+  it, up to six layers.
+- **The inner-layer Protel extensions were wrong.** `In1_Cu` mapped to `G2L`
+  and `In2_Cu` to `G3L` — a transposition of Altium's `GL2`/`GL3`. JLCPCB
+  documents `.G1`/`.G2`, which is also what KiCad writes natively, so the two
+  now line up with no renaming guesswork.
+- `jlcpcb-rules.md` claimed most ESP32 modules are basic-tier. They are not,
+  and this plugin's own example BOM marks its ESP32-C3-WROOM-02 as extended.
+  It also credited `package_for_jlcpcb` with writing the JLCPCB design rules;
+  `create_project` does, which is why they apply from the start.
+
 ## [0.8.0] - 2026-09-16
 
 ### Added
@@ -363,7 +385,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.9.0
 [0.8.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.8.0
 [0.7.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.7.0
 [0.6.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.6.0

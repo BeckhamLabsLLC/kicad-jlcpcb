@@ -16,7 +16,7 @@ JLCPCB's standard 2-layer process is what most projects use. The plugin's `JLCPC
 | Silkscreen | White | Always |
 | Surface finish | HASL with lead | ENIG +significant cost |
 
-For a Phase 1 board, the user almost never needs to deviate from these. The `package_for_jlcpcb` step ships these defaults via the project's `.kicad_pro` design rules.
+Most boards never need to deviate from these. `create_project` writes them into the project's `.kicad_pro` design rules, so they apply from the moment the project exists — not at packaging time.
 
 ## SMT assembly cost model (the basic-vs-extended thing)
 
@@ -48,7 +48,7 @@ This is why `lcsc_resolve_bom` always tries the basic library first and surfaces
 - **Voltage regulators:** AMS1117 family, common LDOs in SOT-89/SOT-223 are basic
 - **Logic:** 74HC family in SOIC-14, basic op-amps in SOIC-8 are basic
 - **Connectors:** USB-C 16-pin, JST PH/XH/SH, common pin headers are basic
-- **Microcontrollers:** ESP32 modules (most) are basic; STM32, RP2040 chips are mostly extended
+- **Microcontrollers:** almost always extended, including ESP32 modules. Don't assume otherwise — the ESP32-C3-WROOM-02 in this plugin's own example is extended. Check `lcsc_search` rather than guessing; on a board with one microcontroller the $3 setup fee is usually unavoidable and worth stating plainly at the checkpoint.
 - **Specialty ICs (RF, ADC, motor drivers, sensors):** almost always extended
 
 The boundary moves over time as JLCPCB rotates their assembly inventory. Trust the live `lcsc_search` output, not memorized assumptions.
