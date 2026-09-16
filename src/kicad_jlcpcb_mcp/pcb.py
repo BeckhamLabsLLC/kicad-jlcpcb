@@ -113,6 +113,13 @@ PASSIVE_SPACING_MM_DEFAULT = 7.0
 CONN_SPACING_MM_DEFAULT = 15.0
 GRID_ORIGIN_MM_DEFAULT = 10.0
 
+# Floors for the compress-to-fit logic, per class. Compression keeps parts
+# inside the outline, but past a point it just stacks them on top of each
+# other: an 0603 is 1.6 mm long, so a 0.66 mm pitch overlaps copper, fails
+# DRC, and gets the board rejected. Below these, placement stops shrinking
+# and reports that the parts do not fit — which is the true answer.
+MIN_PITCH_MM = {"passive": 2.54, "ic": 7.62, "conn": 7.62}
+
 
 class PcbGenerationError(RuntimeError):
     """Something went wrong during PCB generation (spec invalid, footprint
@@ -319,9 +326,12 @@ def _place(
         parts = by_class[name]
         cols, rows = _band_rows(len(parts), spacing, usable_w)
 
-        # Compress to fit the band rather than running past it.
-        row_pitch = min(spacing, band_h / rows) if rows else spacing
-        col_pitch = min(spacing, usable_w / cols) if cols else spacing
+        # Compress to fit the band, but not past the point where footprints
+        # would overlap. Overlapping copper is worse than a part that does
+        # not fit: one is reported, the other is silently unmanufacturable.
+        floor = MIN_PITCH_MM.get(name, 2.54)
+        row_pitch = max(min(spacing, band_h / rows) if rows else spacing, floor)
+        col_pitch = max(min(spacing, usable_w / cols) if cols else spacing, floor)
 
         for i, c in enumerate(parts):
             col, row = i % cols, i // cols
@@ -340,11 +350,13 @@ def _place(
     )
     if outside:
         warnings.append(
-            f"{len(outside)} component(s) could not be placed inside the "
-            f"{board_width_mm:g}x{board_height_mm:g} mm outline "
+            f"{len(outside)} of {len(positions)} component(s) do not fit inside "
+            f"the {board_width_mm:g}x{board_height_mm:g} mm outline "
             f"({', '.join(outside[:8])}{' ...' if len(outside) > 8 else ''}). "
-            f"Increase the board size or reduce the part count — JLCPCB "
-            f"rejects footprints outside Edge.Cuts."
+            f"Placement compresses spacing to fit, but stops before footprints "
+            f"would overlap — so this means the board is genuinely too small, "
+            f"not that the layout is poor. Increase the board size or reduce "
+            f"the part count; JLCPCB rejects footprints outside Edge.Cuts."
         )
     return positions, warnings
 

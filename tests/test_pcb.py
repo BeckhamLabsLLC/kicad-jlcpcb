@@ -12,6 +12,7 @@ import pytest
 
 from kicad_jlcpcb_mcp import config, part_library, pcb
 from kicad_jlcpcb_mcp.pcb import (
+    MIN_PITCH_MM,
     PcbGenerationError,
     _classify,
     _place,
@@ -523,7 +524,7 @@ class TestPlacementStaysOnTheBoard:
 
     @pytest.mark.parametrize(
         "count,w,h",
-        [(30, 40, 30), (100, 30, 30), (2, 20, 20), (13, 80, 60), (1, 10, 10)],
+        [(30, 40, 30), (2, 20, 20), (13, 80, 60), (1, 10, 10)],
     )
     def test_everything_lands_inside_the_outline(self, count, w, h):
         comps = [{"ref": f"R{i}"} for i in range(count)]
@@ -557,3 +558,40 @@ class TestPlacementStaysOnTheBoard:
         comps = [{"ref": f"R{i}"} for i in range(20)]
         positions, _ = _place(comps, board_width_mm=60, board_height_mm=40)
         assert len(set(positions.values())) == len(positions)
+
+
+class TestPlacementNeverOverlaps:
+    """Compressing to fit solved parts landing off the board and created a
+    second problem: at 100 parts on 30x30 the pitch fell to 0.66 mm, and an
+    0603 is 1.6 mm long. Overlapping copper fails DRC and gets rejected —
+    and unlike a part that doesn't fit, nothing reports it.
+    """
+
+    def _min_pitch(self, positions):
+        import math
+
+        pts = sorted(positions.values())
+        return min((math.dist(a, b) for a, b in zip(pts, pts[1:])), default=float("inf"))
+
+    @pytest.mark.parametrize("count,w,h", [(20, 40, 30), (30, 40, 30), (100, 30, 30)])
+    def test_pitch_never_drops_below_an_0603_footprint(self, count, w, h):
+        comps = [{"ref": f"R{i}"} for i in range(count)]
+        positions, _ = _place(comps, board_width_mm=w, board_height_mm=h)
+        assert self._min_pitch(positions) >= MIN_PITCH_MM["passive"] - 1e-9
+
+    def test_an_overfull_board_reports_rather_than_stacking_parts(self):
+        comps = [{"ref": f"R{i}"} for i in range(100)]
+        positions, warnings = _place(comps, board_width_mm=30, board_height_mm=30)
+        assert warnings, "an overfull board must say so"
+        joined = " ".join(warnings)
+        assert "do not fit" in joined
+        assert "genuinely too small" in joined
+        # And it still refuses to overlap what it did place.
+        assert self._min_pitch(positions) >= MIN_PITCH_MM["passive"] - 1e-9
+
+    def test_ics_get_more_room_than_passives(self):
+        ics, _ = _place([{"ref": f"U{i}"} for i in range(6)], board_width_mm=30, board_height_mm=30)
+        passives, _ = _place(
+            [{"ref": f"R{i}"} for i in range(6)], board_width_mm=30, board_height_mm=30
+        )
+        assert self._min_pitch(ics) > self._min_pitch(passives)

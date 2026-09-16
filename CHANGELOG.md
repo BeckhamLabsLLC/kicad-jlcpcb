@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   fit is reported rather than silently written out of bounds. Verified
   through `pcbnew`: 20 parts on a 40 x 30 mm board, none outside the outline.
 
+  Compression has a floor per part class. Without one it traded a visible
+  problem for an invisible worse one: 100 parts on a 30 x 30 mm board
+  compressed to a 0.66 mm pitch, and an 0603 is 1.6 mm long, so the copper
+  overlapped. Placement now stops shrinking at a pitch that still fits the
+  footprint and reports that the board is too small, which is the true
+  answer.
+
 ## [0.11.0] - 2026-09-16
 
 ### Fixed
