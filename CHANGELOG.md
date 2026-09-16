@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-16
+
 ### Fixed
 - Session writes are atomic. They used a plain `write_text`, so an
   interruption mid-save left unparseable JSON — and `load_session` treats
@@ -402,7 +404,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.10.0
 [0.9.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.9.0
 [0.8.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.8.0
 [0.7.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.7.0
