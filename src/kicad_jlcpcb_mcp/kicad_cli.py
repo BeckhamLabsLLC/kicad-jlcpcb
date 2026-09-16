@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -68,12 +70,96 @@ _VERSION_RE = re.compile(r"\b(\d+)\.(\d+)(?:\.(\d+))?")
 
 
 def _find_executable() -> str | None:
-    """Locate the kicad-cli binary on PATH. Returns None if not found."""
+    """Locate the kicad-cli binary. Returns None if not found.
+
+    PATH first, then the well-known install locations that don't put
+    anything on PATH. Both of the fallbacks matter in practice: the macOS
+    .app bundle never adds itself to PATH, and Flatpak — which this
+    module's own install hint recommends — only exposes kicad-cli through
+    `flatpak run`. Probing PATH alone means telling a macOS or Flatpak
+    user to install KiCad when they already have it.
+    """
     for candidate in config.KICAD_CLI_CANDIDATES:
         path = shutil.which(candidate)
         if path:
             return path
+
+    for path in config.KICAD_CLI_FALLBACK_PATHS:
+        expanded = Path(path).expanduser()
+        if expanded.is_file() and os.access(expanded, os.X_OK):
+            logger.info("Found kicad-cli outside PATH at %s", expanded)
+            return str(expanded)
+
     return None
+
+
+def _find_flatpak_argv() -> list[str] | None:
+    """Return the argv prefix for a Flatpak KiCad, or None.
+
+    A Flatpak install puts only a GUI launcher on PATH, so kicad-cli is
+    only reachable via `flatpak run --command=kicad-cli`. This module's own
+    install hint recommends Flatpak, so not supporting it was a gap.
+    """
+    flatpak = shutil.which("flatpak")
+    if not flatpak:
+        return None
+    try:
+        r = subprocess.run(
+            [flatpak, "info", config.KICAD_FLATPAK_ID],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return [flatpak, "run", f"--command={config.KICAD_CLI_CANDIDATES[0]}", config.KICAD_FLATPAK_ID]
+
+
+def _find_kicad_argv() -> list[str] | None:
+    """Full argv prefix needed to invoke kicad-cli, or None if unavailable.
+
+    A plain install is one element; a Flatpak install is four. Everything
+    that shells out goes through this so both work identically.
+    """
+    exe = _find_executable()
+    if exe:
+        return [exe]
+    return _find_flatpak_argv()
+
+
+def _install_hint() -> str:
+    """Platform-appropriate install instructions.
+
+    Previously this always printed Fedora dnf commands, including on macOS
+    and Windows.
+    """
+    if sys.platform == "darwin":
+        return (
+            "Install KiCad from https://www.kicad.org/download/macos/ .\n"
+            "kicad-cli lives inside the app bundle at\n"
+            "  /Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli\n"
+            "which is not on PATH by default — this plugin looks there "
+            "automatically.\n"
+            "After installing, restart Claude Code and re-run detect_kicad."
+        )
+    if sys.platform.startswith("win"):
+        return (
+            "Install KiCad from https://www.kicad.org/download/windows/ .\n"
+            "kicad-cli.exe lands in C:\\Program Files\\KiCad\\<version>\\bin\\ ;\n"
+            "add that directory to PATH if the installer did not.\n"
+            "After installing, restart Claude Code and re-run detect_kicad."
+        )
+    return (
+        "Install KiCad with whichever fits your distro:\n"
+        "  sudo dnf install kicad                     # Fedora\n"
+        "  sudo apt install kicad                     # Debian / Ubuntu\n"
+        "  sudo pacman -S kicad                       # Arch\n"
+        "  flatpak install flathub org.kicad.KiCad    # any distro, latest stable\n"
+        "After installing, restart Claude Code and re-run detect_kicad."
+    )
 
 
 def _parse_version(text: str) -> tuple[int, int, int] | None:
@@ -88,12 +174,18 @@ def _parse_version(text: str) -> tuple[int, int, int] | None:
 
 
 def _run_blocking(
-    exe: str, args: Sequence[str], cwd: str | None, timeout: float
+    argv: Sequence[str], args: Sequence[str], cwd: str | None, timeout: float
 ) -> tuple[int, str, str]:
-    """Synchronous subprocess invocation. Runs in a worker thread via _run."""
+    """Synchronous subprocess invocation. Runs in a worker thread via _run.
+
+    `argv` is the launcher prefix from `_find_kicad_argv` — one element for
+    a normal install, four for Flatpak.
+    """
+    if isinstance(argv, str):  # tolerate a bare path from older callers/tests
+        argv = [argv]
     try:
         result = subprocess.run(
-            [exe, *args],
+            [*argv, *args],
             capture_output=True,
             text=True,
             cwd=cwd,
@@ -115,25 +207,18 @@ async def _run(
     decide whether non-zero is an error (e.g. ERC flags exit-non-zero on
     rule violations, which we want to surface as structured warnings).
     """
-    exe = _find_executable()
-    if not exe:
-        raise KicadCliError("kicad-cli not found on PATH. Run detect_kicad for install guidance.")
+    argv = _find_kicad_argv()
+    if not argv:
+        raise KicadCliError(
+            "kicad-cli not found. Run detect_kicad for platform-specific install guidance."
+        )
     cwd_str = str(cwd) if cwd else None
-    return await asyncio.to_thread(_run_blocking, exe, list(args), cwd_str, timeout)
+    return await asyncio.to_thread(_run_blocking, argv, list(args), cwd_str, timeout)
 
 
 # ---------------------------------------------------------------------------
 # detect_kicad
 # ---------------------------------------------------------------------------
-
-
-def _fedora_install_hint() -> str:
-    return (
-        "On Fedora 43, install KiCad with one of:\n"
-        "  sudo dnf install kicad           # native package, may lag upstream\n"
-        "  flatpak install flathub org.kicad.KiCad   # latest stable, sandboxed\n"
-        "After installing, restart Claude Code and re-run detect_kicad."
-    )
 
 
 async def detect_kicad() -> dict:
@@ -162,7 +247,7 @@ async def detect_kicad() -> dict:
             "version_tuple": None,
             "path": None,
             "meets_min": False,
-            "install_hint": _fedora_install_hint(),
+            "install_hint": _install_hint(),
         }
 
     rc, stdout, stderr = await _run(["--version"], timeout=10.0)
@@ -180,7 +265,7 @@ async def detect_kicad() -> dict:
             "raw_version_output": raw_output,
             "install_hint": (
                 "Could not parse kicad-cli --version output. Your install may "
-                "be too old or non-standard. " + _fedora_install_hint()
+                "be too old or non-standard. " + _install_hint()
             ),
         }
 
@@ -193,7 +278,7 @@ async def detect_kicad() -> dict:
         "version_tuple": [major, minor, patch],
         "path": exe,
         "meets_min": meets_min,
-        "install_hint": None if meets_min else _fedora_install_hint(),
+        "install_hint": None if meets_min else _install_hint(),
     }
 
 
@@ -432,7 +517,7 @@ async def sch_export_bom(sch_path: str | Path, output_path: str | Path) -> dict:
     KiCad 9's `kicad-cli pcb export bom` was removed — BOM export is
     schematic-only now. Callers with a PCB but no schematic should
     either (a) build the BOM from their own components list, or (b) use
-    the pcb module's `bom_from_footprints()` helper.
+    the pcb module's `bom_from_components()` helper.
     """
     sch = Path(sch_path).expanduser().resolve()
     out = Path(output_path).expanduser().resolve()

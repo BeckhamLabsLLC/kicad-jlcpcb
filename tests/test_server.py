@@ -208,3 +208,47 @@ class TestPackageForJlcpcb:
         # Steps recorded — BOM now comes from schematic via sch_export_bom
         step_names = [s["step"] for s in result["steps"]]
         assert step_names == ["export_gerbers", "export_drill", "export_pos", "export_bom_from_sch"]
+
+
+class TestBomFallbackWhenThereIsNoSchematic:
+    """JLCPCB assembly orders require a BOM.
+
+    `package_for_jlcpcb` used to set `bom_out = None` whenever the project
+    had no schematic, producing a zip the user could not actually order
+    assembly with — while a comment claimed it built one from the board.
+    `pcb.bom_from_components` existed for this and was never called.
+    """
+
+    def test_bom_is_built_from_the_session_spec(self, tmp_path):
+        from kicad_jlcpcb_mcp.pcb import bom_from_components
+
+        components = [
+            {"ref": "R1", "value": "10k", "lcsc": "C25804", "lib": "Resistor_SMD", "fp": "R_0603"},
+            {"ref": "R2", "value": "10k", "lcsc": "C25804", "lib": "Resistor_SMD", "fp": "R_0603"},
+            {
+                "ref": "C1",
+                "value": "100nF",
+                "lcsc": "C1525",
+                "lib": "Capacitor_SMD",
+                "fp": "C_0402",
+            },
+        ]
+        out = tmp_path / "bom.csv"
+        result = bom_from_components(components, out)
+
+        assert result["rows"] == 2, "identical parts should be grouped onto one line"
+        assert result["parts"] == 3
+        text = out.read_text()
+        assert "Qty,Value,LCSC,Footprint,References" in text
+        assert '2,"10k","C25804"' in text
+        assert '"R1,R2"' in text
+
+    def test_handler_reaches_for_the_session_spec(self):
+        """Guard the wiring itself: the fallback must consult the session."""
+        import inspect
+
+        from kicad_jlcpcb_mcp import server
+
+        src = inspect.getsource(server.KicadJlcpcbServer._package_for_jlcpcb)
+        assert "bom_from_components" in src
+        assert "load_session" in src

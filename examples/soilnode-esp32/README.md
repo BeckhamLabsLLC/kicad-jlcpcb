@@ -51,5 +51,6 @@ asyncio.run(main())
 
 - **Pin-name resolution.** The spec references ESP32-C3 pins by their functional names (`GPIO2`, `3V3`, `EN`) instead of pad numbers — the plugin auto-fetches the pinmap from EasyEDA.
 - **Basic-tier preference.** Every part except the ESP32-C3 module is basic-tier (no JLCPCB assembly setup fee). The ESP32-C3-WROOM-02 is extended but unavoidable.
-- **Mix of packages.** 0603 resistors, 0603 capacitors, SOT-23-5 LDO, QFN module, JST-PH connector, USB-C receptacle.
+- **Mix of packages.** 0603 resistors and capacitors, a SOT-223 LDO (AMS1117-3.3), the ESP32-C3-WROOM-02 module, JST-PH connectors, and a USB-C receptacle.
+- **A deliberate single-pad net.** `VBAT` has one member (`J2` pin 1) because the battery's positive terminal goes to the connector and nowhere else on this board. `/pcb-new` flags 1-pad nets because they are usually typos — this one is the exception that shows what the check is for.
 - **Session persistence.** Run `/pcb-new`, interrupt mid-flow, restart Claude Code, re-run `/pcb-new` on the same path — you'll be offered a resume option.

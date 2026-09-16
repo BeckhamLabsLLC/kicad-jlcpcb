@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-16
+
+Reliability and reach: the plugin now finds KiCad where people actually
+install it, survives a flaky network, and exposes every tool it ships.
+
+### Fixed
+- **KiCad was undetectable on macOS and Flatpak.** Discovery probed `PATH`
+  only. The macOS installer never puts `kicad-cli` on `PATH` (it lives inside
+  `KiCad.app`), and a Flatpak install exposes only a GUI launcher — so users
+  who had KiCad were told to install it. The README promises macOS support
+  and this module's own hint recommended Flatpak. Both now work: known
+  install locations are probed after `PATH`, and Flatpak is invoked through
+  `flatpak run --command=kicad-cli`.
+- **Install instructions were Fedora-only**, printed verbatim on macOS and
+  Windows. Now platform-appropriate.
+- **A single stalled EasyEDA connection failed the part outright** and
+  reported it as "not found" — which reads as a bad C-number and sends you
+  looking in the wrong place. Resolving a 13-part BOM makes 13 sequential
+  requests over several minutes, so this was not rare: 2 of 13 parts failed
+  on a real run. Network faults are now retried like 403s already were; a
+  genuine 404 still fails fast.
+- **An assembly zip could ship without a BOM.** When a project had no
+  schematic, `package_for_jlcpcb` set the BOM to `None` while a comment
+  claimed it built one from the board — producing a zip you cannot actually
+  order assembly with. It now falls back to the component list the session
+  recorded, via the `bom_from_components` helper that existed for exactly
+  this and was never called.
+- **`fetch_part_library` used a second, unthrottled EasyEDA fetcher** with no
+  403 retry and a generic User-Agent, making it far more likely to be blocked
+  than `part_pin_map`. Removed; both paths now share one throttled client.
+- `pcb_generate` accepted `auto_fetch_pinmaps` and `force_refresh` without
+  declaring them, so the model had no way to discover either. Now in the
+  schema.
+- `kicad_cli` pointed callers at a `bom_from_footprints()` helper that does
+  not exist.
+
+### Added
+- `SECURITY.md`, including what the plugin actually touches: subprocesses,
+  files, and two unauthenticated outbound hosts.
+- `.github/dependabot.yml` for pip and GitHub Actions.
+- `tests/conftest.py` zeroes the EasyEDA throttle for all tests. Routing
+  `fetch_part_library` through the rate-limited client had turned
+  `test_part_library.py` into a 24-second run; it is back to 0.06s.
+- Tests for cross-platform discovery, platform-specific install hints, the
+  EasyEDA retry budget, and the BOM fallback.
+
+### Changed
+- All 13 MCP tools are now reachable from a slash command. `fetch_part_library`,
+  `sch_generate`, `sch_run_erc`, and `package_for_jlcpcb` were exposed over MCP
+  and listed in the README while being unreachable from either command.
+- `/pcb-new` gained a schematic step (now that schematics load) and an optional
+  packaging step, and tells the model to read `warnings` before `errors` —
+  a pin-map failure produces one misleading "no pad" error per pin.
+- The `net_stats` guidance no longer treats every 1-pad net as a defect; the
+  shipped example has a deliberate one, which the example now explains.
+- Example docs corrected: the LDO is SOT-223, not SOT-23-5, and the ESP32-C3
+  is a module, not a QFN.
+
 ## [0.3.0] - 2026-09-16
 
 Fixes three bugs that reported success while producing wrong or unusable
@@ -155,7 +213,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.4.0
 [0.3.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.3.0
 [0.2.1]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.2.1
 [0.2.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.2.0

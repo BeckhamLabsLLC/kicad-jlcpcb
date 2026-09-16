@@ -402,3 +402,50 @@ class TestGetPinMaps:
         assert "C82942" in results and "C99999" in results
         assert results["C82942"]["pinmap"]["VIN"] == "1"
         assert "error" in results["C99999"]
+
+
+class TestEasyEdaNetworkRetry:
+    """Resolving a BOM makes one sequential request per part over several
+    minutes. A single stalled connection used to fail that part outright and
+    surface as "not found", which reads as a bad C-number and sends the
+    caller looking in entirely the wrong place."""
+
+    def _client(self, side_effect):
+        client = MagicMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=side_effect)
+        return client
+
+    def _ok(self):
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json = MagicMock(return_value={"success": True, "result": {"title": "X"}})
+        return resp
+
+    async def test_transient_network_error_is_retried(self):
+        calls = {"n": 0}
+
+        async def flaky(url, **kwargs):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise httpx.ReadTimeout("stall")
+            return self._ok()
+
+        result = await part_library._fetch_easyeda_raw("C25804", self._client(flaky))
+        assert result["title"] == "X"
+        assert calls["n"] == 3
+
+    async def test_gives_up_after_the_attempt_budget(self):
+        client = self._client(httpx.ConnectError("down"))
+        with pytest.raises(part_library.PartLibraryError, match="after 3 attempts"):
+            await part_library._fetch_easyeda_raw("C25804", client)
+        assert client.get.await_count == part_library.EASYEDA_ATTEMPTS
+
+    async def test_404_is_not_retried(self):
+        """A genuinely missing part should fail fast, not burn the budget."""
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 404
+        client = self._client(lambda url, **kw: resp)
+        client.get = AsyncMock(return_value=resp)
+        with pytest.raises(part_library.PartLibraryError, match="no component data"):
+            await part_library._fetch_easyeda_raw("C99999999", client)
+        assert client.get.await_count == 1

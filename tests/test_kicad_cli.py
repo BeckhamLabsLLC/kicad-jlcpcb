@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from kicad_jlcpcb_mcp import kicad_cli
+from kicad_jlcpcb_mcp import config, kicad_cli
 from kicad_jlcpcb_mcp.kicad_cli import (
     KicadCliError,
     _parse_erc_report,
@@ -167,8 +167,70 @@ class TestRunMissingExecutable:
     @pytest.mark.asyncio
     async def test_raises_when_no_kicad_cli(self, monkeypatch):
         monkeypatch.setattr(kicad_cli, "_find_executable", lambda: None)
-        with pytest.raises(KicadCliError, match="not found on PATH"):
+        monkeypatch.setattr(kicad_cli, "_find_flatpak_argv", lambda: None)
+        with pytest.raises(KicadCliError, match="not found"):
             await kicad_cli._run(["--version"])
+
+
+class TestCrossPlatformDiscovery:
+    """The README promises macOS, and this module's own install hint
+    recommends Flatpak. Neither puts kicad-cli on PATH, so probing PATH
+    alone told those users to install KiCad when they already had it."""
+
+    def test_falls_back_to_a_known_path_when_path_is_empty(self, tmp_path, monkeypatch):
+        fake = tmp_path / "kicad-cli"
+        fake.write_text("#!/bin/sh\n")
+        fake.chmod(0o755)
+        monkeypatch.setattr(kicad_cli.shutil, "which", lambda _: None)
+        monkeypatch.setattr(config, "KICAD_CLI_FALLBACK_PATHS", (str(fake),))
+        assert kicad_cli._find_executable() == str(fake)
+
+    def test_ignores_a_fallback_path_that_is_not_executable(self, tmp_path, monkeypatch):
+        fake = tmp_path / "kicad-cli"
+        fake.write_text("not executable")
+        fake.chmod(0o644)
+        monkeypatch.setattr(kicad_cli.shutil, "which", lambda _: None)
+        monkeypatch.setattr(config, "KICAD_CLI_FALLBACK_PATHS", (str(fake),))
+        monkeypatch.setattr(kicad_cli, "_find_flatpak_argv", lambda: None)
+        assert kicad_cli._find_executable() is None
+
+    def test_flatpak_argv_is_a_full_prefix_not_a_bare_path(self, monkeypatch):
+        """A Flatpak install needs four argv elements, not one."""
+        monkeypatch.setattr(kicad_cli, "_find_executable", lambda: None)
+        monkeypatch.setattr(
+            kicad_cli,
+            "_find_flatpak_argv",
+            lambda: ["/usr/bin/flatpak", "run", "--command=kicad-cli", "org.kicad.KiCad"],
+        )
+        argv = kicad_cli._find_kicad_argv()
+        assert argv[:2] == ["/usr/bin/flatpak", "run"]
+        assert argv[-1] == "org.kicad.KiCad"
+
+    def test_plain_install_is_a_single_element_argv(self, monkeypatch):
+        monkeypatch.setattr(kicad_cli, "_find_executable", lambda: "/usr/bin/kicad-cli")
+        assert kicad_cli._find_kicad_argv() == ["/usr/bin/kicad-cli"]
+
+
+class TestInstallHintIsPlatformAppropriate:
+    """It used to print Fedora dnf commands on macOS and Windows."""
+
+    def test_macos(self, monkeypatch):
+        monkeypatch.setattr(kicad_cli.sys, "platform", "darwin")
+        hint = kicad_cli._install_hint()
+        assert "KiCad.app" in hint
+        assert "dnf" not in hint
+
+    def test_windows(self, monkeypatch):
+        monkeypatch.setattr(kicad_cli.sys, "platform", "win32")
+        hint = kicad_cli._install_hint()
+        assert "Program Files" in hint
+        assert "dnf" not in hint
+
+    def test_linux_covers_more_than_one_distro(self, monkeypatch):
+        monkeypatch.setattr(kicad_cli.sys, "platform", "linux")
+        hint = kicad_cli._install_hint()
+        for mgr in ("dnf", "apt", "pacman", "flatpak"):
+            assert mgr in hint
 
 
 # Optional integration test — only runs when KICAD_INSTALLED=1

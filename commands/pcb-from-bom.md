@@ -14,6 +14,10 @@ allowed-tools:
   - mcp__kicad-jlcpcb__lcsc_resolve_bom
   - mcp__kicad-jlcpcb__part_pin_map
   - mcp__kicad-jlcpcb__pcb_generate
+  - mcp__kicad-jlcpcb__fetch_part_library
+  - mcp__kicad-jlcpcb__sch_generate
+  - mcp__kicad-jlcpcb__sch_run_erc
+  - mcp__kicad-jlcpcb__package_for_jlcpcb
   - mcp__kicad-jlcpcb__easyeda_handoff
 ---
 

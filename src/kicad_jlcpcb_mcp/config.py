@@ -16,8 +16,25 @@ from pathlib import Path
 # 8.0 introduced the modern `kicad-cli` verbs we depend on.
 KICAD_MIN_VERSION = (8, 0)
 
-# Candidate executable names to probe when detecting a KiCad install.
+# Candidate executable names to probe on PATH.
 KICAD_CLI_CANDIDATES = ("kicad-cli",)
+
+# Well-known locations that never put kicad-cli on PATH. Probed in order
+# after PATH comes up empty, so a macOS or Flatpak user isn't told to
+# install KiCad when they already have it.
+KICAD_CLI_FALLBACK_PATHS = (
+    # macOS .app bundle — the official installer adds nothing to PATH.
+    "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli",
+    "~/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli",
+    # Windows default install roots.
+    "C:/Program Files/KiCad/10.0/bin/kicad-cli.exe",
+    "C:/Program Files/KiCad/9.0/bin/kicad-cli.exe",
+    "C:/Program Files/KiCad/8.0/bin/kicad-cli.exe",
+)
+
+# Flatpak application id. A Flatpak KiCad exposes only a GUI launcher on
+# PATH, so kicad-cli has to be reached through `flatpak run --command=`.
+KICAD_FLATPAK_ID = "org.kicad.KiCad"
 
 # ---------------------------------------------------------------------------
 # Cache and workspace

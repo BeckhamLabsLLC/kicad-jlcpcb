@@ -69,6 +69,14 @@ EASYEDA_HEADERS = {
 # the cache on first run, then instant forever after.
 EASYEDA_MIN_DELAY_SECONDS = 12.0
 
+# Per-request timeout and attempt count. A BOM resolve makes one sequential
+# request per unique part across several minutes, so a single stalled
+# connection should not fail the part — reported as "not found", it reads
+# as a bad C-number and sends the caller looking in the wrong place.
+EASYEDA_TIMEOUT_SECONDS = 20.0
+EASYEDA_ATTEMPTS = 3
+EASYEDA_RETRY_BACKOFF_SECONDS = 2.0
+
 
 class EasyEdaRateLimiter:
     """Throttle EasyEDA component fetches to 1 request per ``EASYEDA_MIN_DELAY_SECONDS``.
@@ -242,21 +250,41 @@ async def _fetch_easyeda_raw(lcsc: str, client: httpx.AsyncClient) -> dict:
     await _limiter.acquire()
 
     url = EASYEDA_COMPONENT_URL.format(lcsc=lcsc)
-    for attempt in (1, 2):
+    resp = None
+    for attempt in range(1, EASYEDA_ATTEMPTS + 1):
         try:
-            resp = await client.get(url, headers=EASYEDA_HEADERS, timeout=15.0)
+            resp = await client.get(url, headers=EASYEDA_HEADERS, timeout=EASYEDA_TIMEOUT_SECONDS)
         except httpx.HTTPError as e:
-            raise PartLibraryError(f"EasyEDA network error for {lcsc}: {e}") from e
+            # Retry transient network faults, not just 403s. Resolving a
+            # 13-part BOM makes 13 sequential requests over several minutes;
+            # a single stalled connection used to fail the part outright and
+            # report it as "not found", which reads as a bad C-number.
+            if attempt < EASYEDA_ATTEMPTS:
+                logger.debug(
+                    "EasyEDA network error for %s (attempt %d/%d): %r — retrying",
+                    lcsc,
+                    attempt,
+                    EASYEDA_ATTEMPTS,
+                    e,
+                )
+                await asyncio.sleep(EASYEDA_RETRY_BACKOFF_SECONDS * attempt)
+                continue
+            raise PartLibraryError(
+                f"EasyEDA network error for {lcsc} after {EASYEDA_ATTEMPTS} attempts: {e!r}"
+            ) from e
         if resp.status_code == 200:
             break
-        if resp.status_code == 403 and attempt == 1:
-            # Rate-limited despite our throttling; back off hard and retry once
+        if resp.status_code == 403 and attempt < EASYEDA_ATTEMPTS:
+            # Rate-limited despite our throttling; back off hard and retry.
             logger.warning("EasyEDA 403 for %s, backing off 60s", lcsc)
             await _limiter.backoff(60.0)
             continue
         if resp.status_code == 404:
             raise PartLibraryError(f"EasyEDA has no component data for {lcsc}")
         raise PartLibraryError(f"EasyEDA returned HTTP {resp.status_code} for {lcsc}")
+
+    if resp is None or resp.status_code != 200:
+        raise PartLibraryError(f"EasyEDA fetch for {lcsc} exhausted {EASYEDA_ATTEMPTS} attempts")
 
     try:
         data = resp.json()
@@ -364,28 +392,6 @@ async def get_pin_maps(
 # ---------------------------------------------------------------------------
 # EasyEDA fetch
 # ---------------------------------------------------------------------------
-
-
-async def _fetch_easyeda_component(lcsc: str, client: httpx.AsyncClient) -> dict:
-    """Fetch raw EasyEDA component JSON for an LCSC part."""
-    url = EASYEDA_COMPONENT_URL.format(lcsc=lcsc)
-    try:
-        resp = await client.get(url)
-    except httpx.HTTPError as e:
-        raise PartLibraryError(f"EasyEDA fetch failed for {lcsc}: {e}") from e
-    if resp.status_code == 404:
-        raise PartLibraryError(f"EasyEDA has no component data for {lcsc}")
-    if resp.status_code != 200:
-        raise PartLibraryError(f"EasyEDA returned HTTP {resp.status_code} for {lcsc}")
-    try:
-        data = resp.json()
-    except ValueError as e:
-        raise PartLibraryError(f"EasyEDA returned non-JSON for {lcsc}: {e}") from e
-    if not isinstance(data, dict) or data.get("success") is False:
-        raise PartLibraryError(
-            f"EasyEDA component fetch unsuccessful for {lcsc}: {data.get('result') if isinstance(data, dict) else 'malformed'}"
-        )
-    return data.get("result", data)
 
 
 # ---------------------------------------------------------------------------
@@ -578,10 +584,9 @@ async def fetch_part_library(
 
     own_client = client is None
     if own_client:
-        client = httpx.AsyncClient(
-            timeout=httpx.Timeout(15.0),
-            headers={"User-Agent": "kicad-jlcpcb/0.1"},
-        )
+        # Headers are set per-request by _fetch_easyeda_raw (EasyEDA
+        # rejects a generic UA), but redirects must be followed here.
+        client = httpx.AsyncClient(timeout=httpx.Timeout(15.0), follow_redirects=True)
 
     warnings: list[str] = []
     pin_count = 2  # default for 2-terminal passives
@@ -589,7 +594,7 @@ async def fetch_part_library(
     model_url = ""
     try:
         try:
-            ee = await _fetch_easyeda_component(lcsc, client)
+            ee = await _fetch_easyeda_raw(lcsc, client)
             # EasyEDA's pin info lives under symbol.shape with type 'P';
             # we just count entries to get the pin count and detect 3D.
             shapes = ee.get("dataStr", {}).get("shape", [])

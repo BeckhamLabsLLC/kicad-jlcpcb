@@ -16,6 +16,10 @@ allowed-tools:
   - mcp__kicad-jlcpcb__lcsc_resolve_bom
   - mcp__kicad-jlcpcb__part_pin_map
   - mcp__kicad-jlcpcb__pcb_generate
+  - mcp__kicad-jlcpcb__fetch_part_library
+  - mcp__kicad-jlcpcb__sch_generate
+  - mcp__kicad-jlcpcb__sch_run_erc
+  - mcp__kicad-jlcpcb__package_for_jlcpcb
   - mcp__kicad-jlcpcb__easyeda_handoff
 ---
 
@@ -113,11 +117,25 @@ Inspect the result:
 - `footprints_placed` should equal the number of components
 - `nets_created` should equal the number of nets in your spec
 - `errors` should be empty (any errors here indicate a wrong footprint name or pin name)
-- Every entry in `net_stats` should have ≥2 pads
+- Every entry in `net_stats` should have ≥2 pads — a 1-pad net is usually a typo, though a deliberate test point or mounting pad is a legitimate exception. Call it out either way rather than silently accepting it.
 
-If there are errors, fix the spec and re-run.
+**Read `warnings` before you read `errors`.** A pin-map fetch failure is reported as a warning and then produces one "no pad <name>" error per pin of that part. Those errors are a symptom; rewriting the netlist to chase them makes things worse. Fix the warning first.
 
-### 8. **TERMINAL STEP — hand off to EasyEDA**
+If there are genuine errors, fix the spec and re-run.
+
+### 8. Generate the schematic
+
+Call `sch_generate` with a netlist spec derived from the same components and nets, then `sch_run_erc`.
+
+The schematic is not required for the board — `pcb_generate` already produced it — but it gives the user something to open and check, and ERC catches connectivity mistakes the PCB stage cannot. Expect `lib_symbol_issues` warnings: the symbols are embedded in the file rather than installed as a library, which is normal and harmless.
+
+Report the ERC result honestly. An unconnected pin is a real finding worth surfacing, not noise to skip past.
+
+### 9. Package for JLCPCB (optional, ask first)
+
+If the user wants manufacturing files without routing in EasyEDA first, call `package_for_jlcpcb`. Be explicit that the board is **unrouted** — the zip will be fabricable but the copper won't connect anything. Most users should route in EasyEDA first (next step) and package afterwards.
+
+### 10. **TERMINAL STEP — hand off to EasyEDA**
 
 Call `easyeda_handoff`. Relay the response verbatim to the user — specifically:
 

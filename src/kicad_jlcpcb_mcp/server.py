@@ -1,10 +1,16 @@
 """MCP Server for kicad-jlcpcb.
 
-Phase 1 tool surface (9 tools across 4 stages):
+Tool surface (13 tools across 6 stages):
   - Project setup: detect_kicad, create_project, load_project
-  - Component sourcing: lcsc_search, lcsc_resolve_bom, fetch_part_library
+  - Component sourcing: lcsc_search, lcsc_resolve_bom, fetch_part_library,
+    part_pin_map
   - Schematic: sch_generate, sch_run_erc
+  - Board: pcb_generate, easyeda_handoff
   - Manufacturing: package_for_jlcpcb
+  - Session: session_resume
+
+`tests/test_server.py::TestAllPhase1ToolsListed` pins this list against the
+handler routing, so definitions and routing cannot drift apart silently.
 
 Phase 2 will add auto-placement, Freerouting integration, and DRC.
 Phase 3 will add vision-based schematic extraction and EasyEDA backup export.
@@ -285,6 +291,8 @@ class KicadJlcpcbServer:
         from pathlib import Path
 
         from . import gerber_pack, kicad_cli
+        from . import pcb as pcb_mod
+        from . import session as session_mod
 
         proj = self._require_active_project()
         pcb_path = Path(args.get("pcb_path") or proj["pcb_path"])
@@ -328,8 +336,26 @@ class KicadJlcpcbServer:
                 bom_warning = f"BOM export from schematic failed (continuing without it): {e}"
                 bom_out = None  # type: ignore
         else:
-            bom_warning = "No schematic file present; BOM not generated."
-            bom_out = None  # type: ignore
+            # No schematic: fall back to the component list the session
+            # recorded when the board was generated. JLCPCB assembly
+            # *requires* a BOM, so shipping a zip without one quietly
+            # produces an order the user cannot place. `bom_from_components`
+            # existed for exactly this and was never wired up.
+            spec_components = []
+            sess = session_mod.load_session(proj["root"])
+            if sess:
+                spec_components = (sess.get("spec") or {}).get("components") or []
+            if spec_components:
+                bom_result = pcb_mod.bom_from_components(spec_components, bom_out)
+                steps.append({"step": "export_bom_from_session_spec", **bom_result})
+            else:
+                bom_warning = (
+                    "No schematic and no recorded component spec, so no BOM was "
+                    "generated. JLCPCB assembly orders require a BOM — generate "
+                    "the board with pcb_generate (which records the spec) or "
+                    "supply a BOM by hand."
+                )
+                bom_out = None  # type: ignore
 
         zip_path = args.get("output_zip")
         if not zip_path:
@@ -586,6 +612,25 @@ def _tool_definitions() -> list[Tool]:
                     "output_path": {
                         "type": "string",
                         "description": "Optional output .kicad_pcb path. Defaults to the active project's .kicad_pcb.",
+                    },
+                    "auto_fetch_pinmaps": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": (
+                            "Fetch pin-name to pad-number maps from EasyEDA for "
+                            "components that have an 'lcsc' field and no explicit "
+                            "'pinmap'. Set false to work offline — nets must then "
+                            "reference bare pad numbers."
+                        ),
+                    },
+                    "force_refresh": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Bypass cached pin maps and refetch from EasyEDA. Slow "
+                            "(rate-limited to one request per 12s); use only when a "
+                            "cached map is known to be wrong."
+                        ),
                     },
                 },
                 "required": ["spec"],
