@@ -9,10 +9,23 @@ of atoms. This module gives us:
   - `find_all(node, name)` → all such children
   - `replace(node, name, new_child)` / `add(node, child)` for in-place patching
 
-We do NOT try to be a full KiCad serializer. We round-trip enough
-structure that schematic.py can build a valid `.kicad_sch` and the
-existing project module can patch design rules. Comments are lost on
-round-trip but KiCad's own files don't include comments anyway.
+**This is a test and inspection utility, not part of file generation.**
+Nothing under `src/` imports it: `schematic.py` builds text directly,
+`project.py` reads JSON, and `pcb.py` goes through `pcbnew`. It is kept
+because it is genuinely useful for poking at KiCad files, but do not
+mistake it for a validator.
+
+**A successful `parse()` does not mean KiCad will load the file.** This
+reader is far more permissive than KiCad's. Most importantly it tokenises
+`;` as an ordinary atom, while KiCad's grammar has no comment syntax at
+all and rejects the entire file. That gap is not hypothetical: it is
+exactly how a `.kicad_sch` that KiCad flatly refused to open shipped with
+a green "output is parseable" test. The only authority on whether a file
+is valid is `kicad-cli` — see `TestKicadActuallyLoadsIt` in
+`tests/test_schematic.py`.
+
+We do NOT try to be a full KiCad serializer. Comments are lost on
+round-trip, but KiCad's own files don't contain comments anyway.
 """
 
 from __future__ import annotations

@@ -21,15 +21,27 @@ Find the best JLCPCB-stocked LCSC part for a given generic spec, with a hard pre
 
 ## Sourcing strategy
 
-1. **Try basic-tier first.** Call `lcsc_search` with `basic_only=true`. Use the user's spec as the query, including any package constraint they mentioned. Set `stock_min=100` to filter out parts at risk of going out of stock.
+1. **Try basic-tier first.** Call `lcsc_search` with `basic_only=true` and `stock_min=100` to filter out parts at risk of going out of stock.
+
+   **Write a short query.** The catalog AND-matches every word, so a spec restated as prose finds nothing. Use the distinctive terms: `TVS SMB 30V`, not `bidirectional TVS diode rated 30 volts in an SMB package`.
+
+   **Keep the value and package in the query** (`10k 0603`, `0.1uF 0402`). A resistance or capacitance routes the search to an exact structured lookup, which is the only reliable way to find basic passives — many of them have no description in the catalog and cannot be found by text at all. `0.1uF` and `100nF` are treated as the same part, as are `4k7` and `4.7k`.
 
 2. **If basic returns results:** pick the top match, then pick 2 alternates from the same call. Done.
 
 3. **If basic returns nothing:** call `lcsc_search` again with `basic_only=false`. Pick the best extended-tier match. Include a clear cost-impact warning in the output.
 
-4. **If extended also returns nothing:** loosen the query (drop the tolerance, drop the temperature rating, drop the package) and try again. Call out what you loosened.
+4. **If extended also returns nothing:** loosen the query and try again, calling out what you loosened. Drop tolerance and temperature rating first, then the package. Do not just add more words — the search narrows automatically, and extra words only ever reduce the match set.
 
 5. **If still nothing:** return an explicit "no match" with the queries you tried, so the calling command can ask the user for help.
+
+## Stock you cannot verify
+
+A result carrying `stock_unknown` was resolved through a source that does
+not report JLCPCB SMT inventory — its `stock` reads 0 regardless of the
+real figure. Never present that 0 as a fact, and never reject a part for
+it. Report the stock as unverified in your rationale and let the caller
+decide.
 
 ## Output format
 

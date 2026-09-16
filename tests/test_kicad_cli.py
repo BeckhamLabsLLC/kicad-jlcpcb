@@ -182,3 +182,74 @@ class TestIntegration:
         result = await detect_kicad()
         assert result["found"] is True
         assert result["version_tuple"] is not None
+
+
+class TestErrorMessagesReachTheModel:
+    """The MCP layer only surfaces `str(e)`, so detail kept as an attribute
+    is detail the model never sees."""
+
+    def test_stderr_is_in_the_message(self):
+        e = KicadCliError(
+            "kicad-cli pcb export gerbers failed (exit 1)",
+            returncode=1,
+            stderr="Error: could not open board file",
+        )
+        assert "could not open board file" in str(e)
+        assert e.returncode == 1
+
+    def test_falls_back_to_stdout(self):
+        e = KicadCliError("failed", stdout="something on stdout")
+        assert "something on stdout" in str(e)
+
+    def test_message_alone_when_nothing_was_captured(self):
+        assert str(KicadCliError("plain failure")) == "plain failure"
+
+    def test_long_output_is_truncated(self):
+        e = KicadCliError("failed", stderr="x" * 5000)
+        assert len(str(e)) < 2000
+        assert "truncated" in str(e)
+
+
+class TestErcReportParsingAcrossKicadVersions:
+    """An unrecognised report format parses as (0, 0), which `sch_erc` then
+    reports as `passed: True`. A parser miss here is a silent false pass,
+    not a visible failure — so every format gets a test."""
+
+    # Verbatim from `kicad-cli sch erc` on KiCad 10.0.5.
+    KICAD_10_REPORT = """ERC report (2026-09-16T10:56:28, Encoding UTF8)
+Report includes: Errors, Warnings
+
+***** Sheet /
+[pin_not_connected]: Pin not connected
+    ; error
+    @(46.99 mm, 35.56 mm): Symbol U1 Pin 4 [NC, Passive, Line]
+[lib_symbol_issues]: The current configuration does not include the symbol library 'kicad_jlcpcb'
+    ; warning
+    @(38.10 mm, 38.10 mm): Symbol U1 [C82942]
+[lib_symbol_issues]: The current configuration does not include the symbol library 'kicad_jlcpcb'
+    ; warning
+    @(88.90 mm, 38.10 mm): Symbol C1 [C1525]
+
+** ERC messages: 3  Errors 1  Warnings 2
+"""
+
+    def test_kicad_10_per_violation_severity_lines(self):
+        assert _parse_erc_report(self.KICAD_10_REPORT) == (1, 2)
+
+    def test_found_summary_line(self):
+        assert _parse_erc_report("Found 2 errors, 3 warnings.") == (2, 3)
+
+    def test_legacy_star_summary(self):
+        assert _parse_erc_report("** Errors 2 ****\n** Warnings 3 ****") == (2, 3)
+
+    def test_severity_lines(self):
+        assert _parse_erc_report("Severity: error\nSeverity: warning\nSeverity: warning") == (1, 2)
+
+    def test_clean_report_is_zero(self):
+        assert _parse_erc_report("ERC report\n\n***** Sheet /\n") == (0, 0)
+
+    def test_a_report_with_violations_never_parses_as_clean(self):
+        """The regression that mattered: this report has violations, and
+        the old parser returned (0, 0) for it."""
+        errors, warnings = _parse_erc_report(self.KICAD_10_REPORT)
+        assert (errors, warnings) != (0, 0)

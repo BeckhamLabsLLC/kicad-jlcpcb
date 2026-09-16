@@ -294,13 +294,21 @@ async def _resolve_pinmaps(
          `auto_fetch=True` and the component has an `lcsc` field
       3. Empty dict (nets must use bare pad numbers)
 
-    Returns a dict keyed by ref. Missing fetches fail silently by
-    returning an empty map — the subsequent net-assignment phase will
-    surface any unresolved pins as errors on the GenerationResult.
+    Returns (maps_by_ref, warnings). A failed fetch yields an empty map
+    *and* a warning naming the cause.
+
+    The warning matters more than it looks. When an EasyEDA fetch fails,
+    every net referencing that part by pin name fails to resolve, and the
+    net-assignment phase reports "U1 has no pad 'GPIO10'" once per pin.
+    Read on its own, that says the caller's net names are wrong; the real
+    cause is a 403 or a timeout. Without this, the model confidently
+    rewrites a correct netlist to chase an error that was never about the
+    netlist.
     """
     from . import part_library
 
     resolved: dict[str, dict[str, str]] = {}
+    warnings: list[str] = []
     for comp in components:
         ref = comp["ref"]
         explicit = comp.get("pinmap") or {}
@@ -311,11 +319,23 @@ async def _resolve_pinmaps(
             try:
                 pm = await part_library.get_pin_map(comp["lcsc"], force_refresh=force_refresh)
                 resolved[ref] = pm.get("pinmap", {})
-            except part_library.PartLibraryError:
+                if not resolved[ref]:
+                    warnings.append(
+                        f"{ref} ({comp['lcsc']}): EasyEDA returned no named pins. "
+                        f"Nets must reference this part by pad number, or supply "
+                        f"an explicit 'pinmap' on the component."
+                    )
+            except part_library.PartLibraryError as e:
                 resolved[ref] = {}
+                warnings.append(
+                    f"{ref} ({comp['lcsc']}): pin-map fetch failed — {e}. "
+                    f"Any 'no pad <name>' errors below are caused by this, not "
+                    f"by your net names. Retry, or supply an explicit 'pinmap'."
+                )
+                logger.warning("Pin-map fetch failed for %s (%s): %s", ref, comp["lcsc"], e)
         else:
             resolved[ref] = {}
-    return resolved
+    return resolved, warnings
 
 
 async def generate_pcb(
@@ -345,7 +365,7 @@ async def generate_pcb(
     out.parent.mkdir(parents=True, exist_ok=True)
 
     # Phase 1: resolve pinmaps (async — may hit EasyEDA).
-    pinmaps = await _resolve_pinmaps(
+    pinmaps, pinmap_warnings = await _resolve_pinmaps(
         components,
         auto_fetch=auto_fetch_pinmaps,
         force_refresh=force_refresh,
@@ -355,7 +375,9 @@ async def generate_pcb(
     board = pcb.BOARD()
     board.SetCopperLayerCount(board_cfg["layer_count"])
 
-    warnings: list[str] = []
+    # Seeded first so a fetch failure is read before the "no pad X" errors
+    # it causes.
+    warnings: list[str] = list(pinmap_warnings)
     errors: list[str] = []
 
     _add_board_outline(pcb, board, board_cfg["width_mm"], board_cfg["height_mm"])

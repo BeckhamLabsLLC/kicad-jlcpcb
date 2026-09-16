@@ -46,9 +46,15 @@ Read the user's description carefully. List the components the board will need: 
 
 ### 4. Source parts
 
-For each generic spec, call `lcsc_search` with `basic_only=true` first. If no basic-tier match, fall back to `basic_only=false`. For parts the user already has LCSC C-numbers for, skip to step 5.
+Dispatch one `part-sourcer` agent per generic spec, in parallel — a single message with one Task call per spec. Each agent applies the basic-first ladder and returns a structured pick. For parts the user already has LCSC C-numbers for, skip to step 5.
+
+For one or two specs, or when an agent comes back with no match and you want to retry by hand, call `lcsc_search` directly instead: `basic_only=true` first, then `basic_only=false`.
+
+When writing a spec, put the **value and package in the query** (`10k 0603`, `0.1uF 0402`). Values route to an exact structured lookup; `0.1uF` and `100nF` are the same part. Keep queries short — the catalog AND-matches every word, so `TVS SMB 30V` finds parts that `bidirectional TVS diode rated 30 volts in SMB package` does not.
 
 Collect picks into a BOM array of `{lcsc, qty}` rows and call `lcsc_resolve_bom` to validate and tally the extended-part setup fee.
+
+Watch for a `stock_unknown` flag on any resolved part — its JLCPCB stock could not be verified, and you must say so at the checkpoint rather than presenting the number as fact.
 
 ### 5. **CHECKPOINT — present the BOM**
 

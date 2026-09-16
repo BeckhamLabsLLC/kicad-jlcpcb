@@ -6,6 +6,69 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-16
+
+Fixes three bugs that reported success while producing wrong or unusable
+output. All were invisible to the test suite because every check inspected
+our own output with our own code.
+
+### Fixed
+- **The generated `.kicad_sch` would not open in KiCad.** Any KiCad version
+  refused it outright with "Failed to load schematic", for two independent
+  reasons: the file carried a `;` comment (KiCad's S-expression grammar has
+  no comment syntax) and `(net (name ...) (member ...))` nodes (netlist
+  grammar, not schematic grammar). `test_output_is_parseable_sexpr` passed
+  throughout, because our own tokenizer accepts `;` as a bare atom.
+
+  Schematics now load, and their netlist matches the spec. Connectivity is
+  carried by global labels rather than drawn wires — two global labels
+  sharing a name are one net in KiCad, which gives a correct netlist without
+  solving schematic routing. Symbols get real pins and an `instances` block
+  so reference designators stick, and every coordinate lands on the 1.27 mm
+  grid (off-grid pins load fine and then silently refuse to connect).
+
+- **`sch_run_erc` always reported "passed" on KiCad 9 and 10.** Those
+  versions write per-violation severity on its own line, which none of the
+  parser's patterns matched, so a report with errors parsed as `(0, 0)` and
+  came back as `passed: true`. Verified against a real KiCad 10.0.5 report:
+  1 error, 3 warnings, previously reported as clean.
+
+- **Pin-map fetch failures were silently swallowed**, so an EasyEDA 403 or
+  timeout surfaced as `"U1 has no pad 'GPIO10'"` repeated once per pin.
+  Read alone that says the caller's net names are wrong, and the model would
+  rewrite a correct netlist chasing it. `pcb_generate` now names the real
+  cause in `warnings`, ahead of the errors it produces.
+
+- **`kicad-cli` stderr never reached the model.** `KicadCliError` captured
+  `.stdout`/`.stderr` as attributes, but the MCP layer only surfaces
+  `str(e)` — so a failure read `"kicad-cli pcb export gerbers failed
+  (exit 1)"` with no way to act on it. The captured output is now in the
+  message, truncated to 800 characters.
+
+### Added
+- `TestKicadActuallyLoadsIt` in `tests/test_schematic.py` — runs the
+  generated schematic through `kicad-cli` and asserts the exported netlist
+  matches the spec. Gated on `KICAD_INSTALLED=1`. This is the check that was
+  missing; everything else validated our output with our own parser.
+- ERC report-format tests covering KiCad 9/10, the `Found N errors` summary,
+  the legacy `** Errors N ****` form, and `Severity:` lines — with an
+  explicit assertion that a report containing violations never parses as
+  clean.
+
+### Changed
+- `.kicad_sch` output is now format version 20250114 (what KiCad 9/10 write)
+  rather than 20231120.
+- `/pcb-new` now dispatches `part-sourcer` agents for sourcing, which the
+  agent definition and skill reference had claimed all along while the
+  command itself called `lcsc_search` directly.
+- `part-sourcer` guidance updated for how search actually behaves: short
+  queries beat prose, values and chip sizes belong in the query, and a
+  `stock_unknown` flag must never be presented as a stock of zero.
+- `sexpr.py` documents that it is an inspection utility, is imported by
+  nothing in `src/`, and is deliberately more permissive than KiCad's
+  parser — a successful `parse()` says nothing about whether KiCad will
+  load the file.
+
 ## [0.2.1] - 2026-09-16
 
 ### Fixed
@@ -92,7 +155,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.3.0
 [0.2.1]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.2.1
 [0.2.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.2.0
 [0.1.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.1.0

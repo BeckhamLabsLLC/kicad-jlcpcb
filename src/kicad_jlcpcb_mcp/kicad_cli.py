@@ -27,15 +27,35 @@ logger = logging.getLogger(__name__)
 
 
 class KicadCliError(RuntimeError):
-    """A `kicad-cli` invocation failed (binary missing, timeout, or unparseable output)."""
+    """A `kicad-cli` invocation failed (binary missing, timeout, or unparseable output).
+
+    `str(e)` deliberately includes kicad-cli's own stderr. The MCP layer
+    only ever surfaces `str(e)` to the model, so anything kept solely as an
+    attribute is invisible where it matters: a caller would see
+    "kicad-cli pcb export gerbers failed (exit 1)" and have nothing to act
+    on, while the actual reason sat in `.stderr` on the server.
+    """
+
+    #: Cap on how much captured output goes into the message. Enough for a
+    #: real diagnostic, not so much that it floods the model's context.
+    OUTPUT_EXCERPT_CHARS = 800
 
     def __init__(
         self, message: str, *, returncode: int | None = None, stdout: str = "", stderr: str = ""
     ):
-        super().__init__(message)
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+        super().__init__(self._format(message, stdout, stderr))
+
+    @classmethod
+    def _format(cls, message: str, stdout: str, stderr: str) -> str:
+        detail = (stderr or "").strip() or (stdout or "").strip()
+        if not detail:
+            return message
+        if len(detail) > cls.OUTPUT_EXCERPT_CHARS:
+            detail = detail[: cls.OUTPUT_EXCERPT_CHARS] + " ...[truncated]"
+        return f"{message}\nkicad-cli output:\n{detail}"
 
 
 # Regex for parsing `kicad-cli --version` output. KiCad prints lines like:
@@ -238,28 +258,49 @@ async def sch_erc(sch_path: str | Path, *, output_path: str | Path | None = None
 def _parse_erc_report(text: str) -> tuple[int, int]:
     """Extract (errors, warnings) totals from a kicad-cli ERC report.
 
-    KiCad's ERC reports end with summary lines like:
-        ** ERC messages: 5 ****
-        ** Errors 2 ****
-        ** Warnings 3 ****
-    or, in newer builds:
-        Found 2 errors, 3 warnings.
+    The report format has changed across KiCad versions, and getting this
+    wrong is worse than failing: an unrecognised format parses as (0, 0),
+    which `sch_erc` then reports as `passed: True`. KiCad 9 and 10 write
+    per-violation severity on its own line, which none of the older
+    patterns matched, so ERC silently passed on every modern install.
 
-    We try both shapes and fall back to counting "Severity: error" /
-    "Severity: warning" lines.
+    Recognised shapes, most specific first:
+
+        KiCad 9/10, per violation:
+            [pin_not_connected]: Pin not connected
+                ; error
+                @(46.99 mm, 35.56 mm): Symbol U1 Pin 4 [NC, Passive, Line]
+
+        Newer summary line:
+            Found 2 errors, 3 warnings.
+
+        Legacy summary lines:
+            ** Errors 2 ****
+            ** Warnings 3 ****
+
+        Older per-violation:
+            Severity: error
     """
-    # Try the modern "Found N errors, M warnings" line
+    # KiCad 9/10 per-violation severity lines. Checked first because a
+    # report can contain both these and a summary line, and counting the
+    # violations is the more reliable of the two.
+    errors = len(re.findall(r"^\s*;\s*error\s*$", text, re.IGNORECASE | re.MULTILINE))
+    warnings = len(re.findall(r"^\s*;\s*warning\s*$", text, re.IGNORECASE | re.MULTILINE))
+    if errors or warnings:
+        return errors, warnings
+
+    # "Found N errors, M warnings"
     m = re.search(r"Found\s+(\d+)\s+errors?,\s*(\d+)\s+warnings?", text, re.IGNORECASE)
     if m:
         return int(m.group(1)), int(m.group(2))
 
-    # Try the legacy "** Errors N ****" / "** Warnings N ****" lines
+    # Legacy "** Errors N ****" / "** Warnings N ****"
     err_m = re.search(r"\*\*\s*Errors\s+(\d+)", text)
     warn_m = re.search(r"\*\*\s*Warnings\s+(\d+)", text)
     if err_m or warn_m:
         return int(err_m.group(1)) if err_m else 0, int(warn_m.group(1)) if warn_m else 0
 
-    # Fall back to per-line severity counting
+    # "Severity: error" / "Severity: warning"
     errors = len(re.findall(r"Severity:\s*error", text, re.IGNORECASE))
     warnings = len(re.findall(r"Severity:\s*warning", text, re.IGNORECASE))
     return errors, warnings
