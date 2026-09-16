@@ -252,3 +252,36 @@ class TestBomFallbackWhenThereIsNoSchematic:
         src = inspect.getsource(server.KicadJlcpcbServer._package_for_jlcpcb)
         assert "bom_from_components" in src
         assert "load_session" in src
+
+
+class TestServerActuallyConstructs:
+    """Guard the `mcp<2` bound with a test rather than a comment.
+
+    mcp 2.x removed `Server.list_tools` and renamed `Tool.inputSchema`, so
+    the server dies during construction with "'Server' object has no
+    attribute 'list_tools'". Nothing in this suite noticed: every other
+    test calls `_tool_definitions()` and `_handle_tool` directly, never
+    building the server. A Dependabot PR widening the bound to `<3` passed
+    CI against mcp 2.2.0 while the plugin was unstartable.
+
+    Constructing the server is the cheapest thing that exercises the
+    handler registration those versions broke.
+    """
+
+    def test_constructing_the_server_registers_handlers(self):
+        from kicad_jlcpcb_mcp.server import KicadJlcpcbServer
+
+        # Raises on an incompatible mcp: _setup_handlers() calls
+        # @server.list_tools() and @server.call_tool() at construction time.
+        srv = KicadJlcpcbServer()
+        assert srv._server is not None
+
+    def test_installed_mcp_exposes_the_low_level_api_we_build_on(self):
+        from mcp.server import Server
+
+        for attr in ("list_tools", "call_tool", "run"):
+            assert hasattr(Server, attr), (
+                f"installed mcp has no Server.{attr}; the server cannot start. "
+                "The `mcp<2` bound in pyproject.toml exists for this — do not "
+                "widen it without porting server.py to the newer API."
+            )

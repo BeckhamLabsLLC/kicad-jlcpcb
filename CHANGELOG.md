@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- The `mcp<2` bound was enforced only by a comment. A Dependabot PR widening
+  it to `<3` passed CI against mcp 2.2.0 while the server was unstartable,
+  because no test constructed the server — every other test calls
+  `_tool_definitions()` and `_handle_tool` directly.
+  `TestServerActuallyConstructs` now builds the server and asserts the
+  low-level `Server` API we depend on is present.
+
 ## [0.4.0] - 2026-09-16
 
 Reliability and reach: the plugin now finds KiCad where people actually
