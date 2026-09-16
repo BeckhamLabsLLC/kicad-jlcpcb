@@ -6,24 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-16
+
+### Added
+- **`session_confirm_bom`.** `bom_confirmed` was a declared session stage with
+  its own resume hint that nothing ever set. The BOM checkpoint is the
+  plugin's one guard against spending money on a wrong board, and its approval
+  lived only in the conversation — so a Claude Code restart between approving
+  the BOM and generating the board reported the stage as merely "parts
+  sourced" and asked the user to approve the same BOM again. `/pcb-new` now
+  records it, with an optional note for whatever the user asked to change.
+  That is 14 tools, all reachable from a slash command.
+- Coverage reported on every CI run. Deliberately not gated: a threshold on a
+  suite whose two most important layers — KiCad integration and live upstream
+  — sit behind env vars would measure the wrong thing.
+
 ### Fixed
 - Platform-specific assumptions in three tests, exposed by the new macOS and
-  Windows CI within minutes of its first run: two asserted the install hint
-  names Fedora (it has been platform-specific since 0.4.0), one asserted a
+  Windows matrix within minutes of its first run: two asserted the install
+  hint names Fedora (platform-specific since 0.4.0), one asserted a
   non-executable file is skipped during discovery (Windows has no execute bit,
   so `os.access(X_OK)` is true for any file that exists), and one asserted a
   session path starts with `/` (a Windows absolute path starts with a drive
-  letter). All four were test bugs; the per-platform code behaves correctly on
-  all three.
+  letter). All test bugs; the per-platform code behaves correctly everywhere.
+- `pytest-cov` was missing from the dev extra, so the coverage step ran against
+  an environment without it. The edit adding it had silently matched nothing
+  and it worked locally only because the package was already installed.
 
 ### Changed
-- README and the workflow skill describe what the plugin actually produces
-  now, including the two things worth checking before ordering: a placeholder
+- README and the workflow skill describe what the plugin actually produces,
+  including the two things worth checking before ordering: a placeholder
   footprint does not match the real part, and CPL rotations are passed through
   rather than corrected.
 - The example walkthrough is labelled as illustrative rather than a recording,
-  and its timings reflect that pin-map fetches are now skipped for parts wired
-  by pad number — 3 fetches for the 13-part example, not 13.
+  and its timings reflect that pin-map fetches are skipped for parts wired by
+  pad number — 3 fetches for the 13-part example, not 13.
 
 ## [0.7.0] - 2026-09-16
 
@@ -346,7 +363,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.8.0
 [0.7.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.7.0
 [0.6.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.6.0
 [0.5.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.5.0

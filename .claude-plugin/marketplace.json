@@ -13,7 +13,7 @@
       "name": "kicad-jlcpcb",
       "source": "./",
       "description": "Turn a PCB idea into a wired .kicad_pcb ready for EasyEDA auto-routing and one-click JLCPCB ordering — LCSC part sourcing, EasyEDA pin-map auto-fetch, and session-persisted workflows.",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "author": { "name": "BeckhamLabs", "url": "https://github.com/BeckhamLabsLLC" },
       "homepage": "https://github.com/BeckhamLabsLLC/kicad-jlcpcb",
       "license": "MIT",
