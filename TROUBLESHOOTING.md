@@ -217,7 +217,7 @@ The session file was never created (the project was made outside this plugin) or
 
 ### "No PCB file" error
 
-Phase 1.6 does not require this legacy tool for most users — the EasyEDA handoff flow is preferred. If you do want the zip path, first route your board in KiCad or open it in EasyEDA and export, then re-run.
+Most users do not need this legacy tool — the EasyEDA handoff flow is preferred. If you do want the zip path, first route your board in KiCad or open it in EasyEDA and export, then re-run.
 
 ### JLCPCB web upload rejects the zip
 

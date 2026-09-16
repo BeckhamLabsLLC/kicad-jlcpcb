@@ -147,4 +147,4 @@ Call `easyeda_handoff`. Relay the response verbatim to the user — specifically
 - The `why_easyeda` explanation
 - The `alternative` KiCad-based flow if they'd rather not use EasyEDA
 
-Phase 1.6 stops here. The plugin has done everything it can automate: parts, pin maps, footprints, placement, connectivity. Routing and ordering are reliably automated by EasyEDA's web app, so the plugin hands off rather than trying to ship its own broken headless auto-router.
+The plugin stops here. It has done everything it can automate: parts, pin maps, footprints, placement, connectivity. Routing and ordering are reliably automated by EasyEDA's web app, so the plugin hands off rather than trying to ship its own broken headless auto-router.

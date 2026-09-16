@@ -85,7 +85,7 @@ Tighten the fallback to try extended first.
 
 ## Scope and philosophy
 
-- **Phase 1.6 is about reliability, not routing.** The plugin wires things up; EasyEDA routes and orders. PRs that add headless routing (Freerouting integration, SA-PCB, etc.) will need a serious justification.
+- **This is about reliability, not routing.** The plugin wires things up; EasyEDA routes and orders. PRs that add headless routing (Freerouting integration, SA-PCB, etc.) will need a serious justification.
 - **Hard preference for JLCPCB basic-tier parts.** Any change that silently picks extended-tier parts without a cost warning is a regression.
 - **Tests gate refactors.** If a refactor "can't be tested," that usually means the refactor is also hard to reason about.
 

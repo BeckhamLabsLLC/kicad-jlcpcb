@@ -1,7 +1,7 @@
 ---
 name: kicad-jlcpcb-workflow
 description: |
-  Use this skill when the user asks to "design a PCB", "make a board", "build a PCB project", "order from JLCPCB", "create a schematic", "source LCSC parts", "wire up a board", "generate a PCB from a BOM", or any KiCad + JLCPCB workflow. Also use when working with `.kicad_pro` or `.kicad_pcb` files. Phase 1.6 handles project setup, LCSC part sourcing, EasyEDA pin-map fetching, fully-wired `.kicad_pcb` generation via pcbnew, and hand-off to EasyEDA for routing + JLCPCB ordering.
+  Use this skill when the user asks to "design a PCB", "make a board", "build a PCB project", "order from JLCPCB", "create a schematic", "source LCSC parts", "wire up a board", "generate a PCB from a BOM", or any KiCad + JLCPCB workflow. Also use when working with `.kicad_pro` or `.kicad_pcb` files. Handles project setup, LCSC part sourcing, EasyEDA pin-map fetching, fully-wired `.kicad_pcb` generation via pcbnew, and hand-off to EasyEDA for routing + JLCPCB ordering.
 ---
 
 # KiCad → EasyEDA → JLCPCB Workflow
@@ -37,7 +37,7 @@ I tried shipping headless Freerouting in an earlier phase. It doesn't work on RF
 
 ## Checkpoint discipline
 
-Phase 1.6 enforces one hard checkpoint: **after BOM resolution, before PCB generation.** Always show the user:
+There is one hard checkpoint: **after BOM resolution, before PCB generation.** Always show the user:
 - Every resolved part with its C-number, package, tier (basic/extended), and stock
 - **Every extended-tier part with the cost warning**, bold
 - The `estimated_setup_fee_usd` total

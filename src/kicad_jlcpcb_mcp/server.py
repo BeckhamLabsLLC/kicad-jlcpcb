@@ -339,9 +339,9 @@ class KicadJlcpcbServer:
         pcb_path = Path(args.get("pcb_path") or proj["pcb_path"])
         if not pcb_path.is_file():
             raise ValueError(
-                f"No PCB file at {pcb_path}. Phase 1 doesn't generate the .kicad_pcb — "
-                f"open the schematic in KiCad, create a board, place + route, save, "
-                f"then re-run package_for_jlcpcb."
+                f"No PCB file at {pcb_path}. Run pcb_generate first, or open the "
+                f"project in KiCad, create and save a board, then re-run "
+                f"package_for_jlcpcb."
             )
 
         manufacturing = Path(proj["manufacturing_dir"])
@@ -481,7 +481,7 @@ class KicadJlcpcbServer:
 
 
 def _tool_definitions() -> list[Tool]:
-    """Return the full list of Tool definitions exposed by Phase 1.
+    """Return the full list of Tool definitions this server exposes.
 
     Kept as a free function so tests can introspect the schema without
     instantiating the server (which would also start the MCP framework).
@@ -766,7 +766,7 @@ def _tool_definitions() -> list[Tool]:
                 "Protel extensions, drill to .XLN, and zip everything into a "
                 "JLCPCB-ready manufacturing/jlcpcb-<name>-<date>.zip. "
                 "Requires that placement and routing are already done in KiCad — "
-                "this is the terminal Phase 1 tool."
+                "this is the terminal tool in the workflow."
             ),
             inputSchema={
                 "type": "object",
@@ -895,13 +895,11 @@ def _tool_definitions() -> list[Tool]:
 
 def main():
     """Entry point for the MCP server."""
-    logger.info(
-        f"kicad-jlcpcb v{__version__} starting | "
-        f"phase=1.6 | tools=detect_kicad,create_project,load_project,"
-        f"lcsc_search,lcsc_resolve_bom,fetch_part_library,part_pin_map,"
-        f"sch_generate,sch_run_erc,pcb_generate,easyeda_handoff,"
-        f"package_for_jlcpcb,session_resume"
-    )
+    # Derived, not typed out. The hardcoded list this replaced had drifted
+    # to 13 names while the server exposed 14, so the startup banner — the
+    # first diagnostic anyone reads — was quietly wrong.
+    tools = [t.name for t in _tool_definitions()]
+    logger.info(f"kicad-jlcpcb v{__version__} starting | {len(tools)} tools | " + ",".join(tools))
     server = KicadJlcpcbServer()
     asyncio.run(server.run())
 

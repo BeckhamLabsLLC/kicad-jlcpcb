@@ -1,6 +1,6 @@
 """PCB generation from a declarative spec using KiCad's pcbnew Python API.
 
-This is the Phase 1.5 addition that closes the gap between "I have a
+This closes the gap between "I have a
 BOM and I know how things connect" and "I have a .kicad_pcb ready for
 routing in KiCad."
 
@@ -43,7 +43,7 @@ rearrange to their liking, and then route (manually or with Freerouting
 from KiCad's menu).
 
 This module does NOT route traces. Routing is Phase 2 and is best done
-interactively in KiCad where the user has visual feedback. Phase 1.5's
+interactively in KiCad where the user has visual feedback. This module's
 job is to eliminate the weeks of tedious wire-drawing from the workflow.
 """
 
@@ -580,7 +580,7 @@ async def generate_pcb(
     out = Path(output_path).expanduser().resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Phase 1: resolve pinmaps (async — may hit EasyEDA).
+    # Stage 1: resolve pinmaps (async — may hit EasyEDA).
     needed = _refs_needing_pin_names(nets)
     skipped = sum(
         1 for c in components if c.get("lcsc") and not c.get("pinmap") and c["ref"] not in needed
@@ -599,7 +599,7 @@ async def generate_pcb(
         needed_refs=needed,
     )
 
-    # Phase 2: pcbnew board construction (sync).
+    # Stage 2: pcbnew board construction (sync).
     board = pcb.BOARD()
     board.SetCopperLayerCount(board_cfg["layer_count"])
 

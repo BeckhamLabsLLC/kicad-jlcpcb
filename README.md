@@ -357,11 +357,11 @@ fix anything that looks wrong there.
 
 ---
 
-## Design rationale (Phase 1.6)
+## Design rationale: why the handoff
 
 Earlier releases tried to route the board headlessly with Freerouting and produce a JLCPCB Gerber zip directly. That didn't work for real boards — Freerouting 2.1.0 has CLI bugs, can't route RF matching networks, and won't save partial results.
 
-Phase 1.6 takes the pragmatic win: **the plugin wires everything up, EasyEDA routes and orders.** The tradeoff is opening a browser tab and clicking two buttons; in exchange you get reliability the open-source tooling can't match and a one-click path to a JLCPCB order.
+So the plugin takes the pragmatic win: **it wires everything up, EasyEDA routes and orders.** The tradeoff is opening a browser tab and clicking two buttons; in exchange you get reliability the open-source tooling can't match and a one-click path to a JLCPCB order.
 
 ---
 

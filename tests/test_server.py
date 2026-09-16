@@ -16,8 +16,7 @@ def server():
 class TestToolDefinitions:
     def test_phase1_tools_present(self):
         names = [t.name for t in _tool_definitions()]
-        # Phase 1 ships these three tools wired through the server.
-        # Other Phase 1 tools (lcsc_*, sch_*, package_*) wire in below.
+        # A smoke check. TestAllToolsListed below is the real contract.
         for required in ("detect_kicad", "create_project", "load_project"):
             assert required in names
 
@@ -86,7 +85,7 @@ class TestUnknownTool:
 
 
 class TestAllPhase1ToolsListed:
-    """Phase 1 contract: every tool the server can route must appear in
+    """The contract: every tool the server can route must appear in
     list_tools, and vice versa. Catches drift between definitions and
     handlers."""
 
@@ -160,7 +159,7 @@ class TestPackageForJlcpcb:
     @pytest.mark.asyncio
     async def test_requires_pcb_file_to_exist(self, server, tmp_path):
         await server._handle_tool("create_project", {"parent_dir": str(tmp_path), "name": "demo"})
-        # No .kicad_pcb was created (Phase 1 doesn't auto-generate one)
+        # No .kicad_pcb was created — create_project does not make one.
         with pytest.raises(ValueError, match="No PCB file"):
             await server._handle_tool("package_for_jlcpcb", {})
 
@@ -699,3 +698,27 @@ class TestCallToolErrorWrapping:
         body = await self._call(server, "anything", {})
         monkeypatch.undo()
         assert "x.kicad_pcb" in body["where"]
+
+
+class TestStartupBanner:
+    """The banner is the first diagnostic anyone reads when a server won't
+    start. A hardcoded tool list drifted to 13 names while the server
+    exposed 14."""
+
+    def test_the_banner_is_derived_from_the_real_tool_list(self, caplog):
+        import logging
+
+        from kicad_jlcpcb_mcp import server as server_mod
+
+        with caplog.at_level(logging.INFO):
+            with (
+                patch.object(server_mod, "KicadJlcpcbServer"),
+                patch.object(server_mod.asyncio, "run"),
+            ):
+                server_mod.main()
+
+        banner = caplog.text
+        expected = [t.name for t in _tool_definitions()]
+        assert f"{len(expected)} tools" in banner
+        for name in expected:
+            assert name in banner

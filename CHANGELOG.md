@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-16
+
+### Fixed
+- **`package_for_jlcpcb` told users the plugin cannot generate a board.**
+  Its "no PCB file" error said "Phase 1 doesn't generate the .kicad_pcb —
+  open the schematic in KiCad, create a board, place + route, save", which
+  stopped being true when `pcb_generate` shipped. It now points at
+  `pcb_generate`.
+- The startup banner hardcoded a list of tool names that had drifted to 13
+  while the server exposed 14. It is derived from the tool definitions now,
+  so it cannot drift again — and it is the first diagnostic anyone reads
+  when a server will not start.
+
+### Changed
+- Dropped "Phase 1" / "Phase 1.6" from user-facing text. It was internal
+  versioning that never mapped to the released version, appeared in the
+  README, the skill, both commands, and an error message, and told nobody
+  anything.
+
 ## [0.14.0] - 2026-09-16
 
 ### Added
@@ -485,7 +504,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.15.0
 [0.14.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.14.0
 [0.13.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.13.0
 [0.12.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.12.0
