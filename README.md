@@ -49,7 +49,7 @@ Three recurring friction points in small-batch PCB work, automated:
 - **Two slash commands**: `/pcb-new` (from a description) and `/pcb-from-bom` (from a CSV).
 - **One agent**: `part-sourcer` — finds the best JLCPCB-stocked part for a generic spec.
 - **One skill**: `kicad-jlcpcb-workflow` — the full reference the LLM consults while driving the workflow.
-- **13 MCP tools** covering setup, sourcing, schematic, PCB generation, EasyEDA handoff, and session resume.
+- **14 MCP tools** covering setup, sourcing, schematic, PCB generation, EasyEDA handoff, and session resume.
 - **Session persistence** — each project writes a `.kicad_jlcpcb_session.json` so `/pcb-new` can resume mid-flow after a Claude Code restart.
 
 ---
@@ -215,6 +215,7 @@ Set expectations honestly before you start:
 | Setup | `create_project` | Scaffold `.kicad_pro` + subdirs + session file |
 | Setup | `load_project` | Validate existing `.kicad_pro`; surfaces resumable session state |
 | Resume | `session_resume` | Report where a prior workflow left off for a project dir |
+| Resume | `session_confirm_bom` | Record the user's BOM approval so a restart doesn't re-ask |
 | Sourcing | `lcsc_search` | Free-text part search, basic-only by default |
 | Sourcing | `lcsc_resolve_bom` | Batch BOM resolution with cost-impact warnings |
 | Sourcing | `fetch_part_library` | Symbol + footprint from EasyEDA's real geometry into project `libs/` |

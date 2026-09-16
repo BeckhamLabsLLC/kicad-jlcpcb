@@ -11,6 +11,7 @@ allowed-tools:
   - mcp__kicad-jlcpcb__create_project
   - mcp__kicad-jlcpcb__load_project
   - mcp__kicad-jlcpcb__session_resume
+  - mcp__kicad-jlcpcb__session_confirm_bom
   - mcp__kicad-jlcpcb__lcsc_resolve_bom
   - mcp__kicad-jlcpcb__part_pin_map
   - mcp__kicad-jlcpcb__pcb_generate

@@ -44,6 +44,14 @@ jobs:
       - name: Run tests (non-KiCad suite)
         run: pytest tests/ --tb=short
 
+      # Reported, not gated. A hard threshold on a suite whose two most
+      # important layers (KiCad integration, live upstream) are gated behind
+      # env vars would measure the wrong thing, and a number nobody looks at
+      # rots. Printing it on every run keeps it visible.
+      - name: Coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: pytest tests/ -q --cov=kicad_jlcpcb_mcp --cov-report=term
+
       # KICAD_INSTALLED=1 integration tests need a KiCad install with the
       # pcbnew Python bindings, which no hosted runner has. Run them locally:
       #   KICAD_INSTALLED=1 pytest tests/

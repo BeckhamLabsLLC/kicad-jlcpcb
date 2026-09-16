@@ -1,13 +1,13 @@
 """MCP Server for kicad-jlcpcb.
 
-Tool surface (13 tools across 6 stages):
+Tool surface (14 tools across 6 stages):
   - Project setup: detect_kicad, create_project, load_project
   - Component sourcing: lcsc_search, lcsc_resolve_bom, fetch_part_library,
     part_pin_map
   - Schematic: sch_generate, sch_run_erc
   - Board: pcb_generate, easyeda_handoff
   - Manufacturing: package_for_jlcpcb
-  - Session: session_resume
+  - Session: session_resume, session_confirm_bom
 
 `tests/test_server.py::TestAllPhase1ToolsListed` pins this list against the
 handler routing, so definitions and routing cannot drift apart silently.
@@ -214,6 +214,30 @@ class KicadJlcpcbServer:
                     last_tool="easyeda_handoff",
                 )
             return result
+
+        if name == "session_confirm_bom":
+            from . import session as session_mod
+
+            root = args.get("project_path") or (
+                self._active_project["root"] if self._active_project else None
+            )
+            if not root:
+                raise ValueError("session_confirm_bom requires project_path or an active project.")
+            updated = session_mod.update_stage(
+                root,
+                "bom_confirmed",
+                last_tool="session_confirm_bom",
+                notes=args.get("notes") or "",
+            )
+            if updated is None:
+                raise ValueError(
+                    f"No session file at {root}. Run create_project or load_project first."
+                )
+            return {
+                "project_path": str(root),
+                "confirmed": True,
+                **session_mod.resume_summary(updated),
+            }
 
         if name == "session_resume":
             from . import session as session_mod
@@ -750,6 +774,34 @@ def _tool_definitions() -> list[Tool]:
                     "sch_path": {
                         "type": "string",
                         "description": "Optional schematic path. Defaults to the active project's .kicad_sch.",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="session_confirm_bom",
+            description=(
+                "Record that the user has reviewed and approved the BOM. Call "
+                "this immediately after they confirm at the BOM checkpoint, "
+                "before pcb_generate. Without it the approval lives only in "
+                "the conversation: if Claude Code restarts, session_resume "
+                "reports the BOM as merely 'sourced' and the user is asked to "
+                "approve the same BOM again. Spending money on a board is the "
+                "one decision in this workflow worth making durable."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_path": {
+                        "type": "string",
+                        "description": "Defaults to the active project.",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": (
+                            "Optional note about what the user approved or "
+                            "asked to change, carried into the resume summary."
+                        ),
                     },
                 },
             },

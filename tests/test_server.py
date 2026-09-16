@@ -104,6 +104,7 @@ class TestAllPhase1ToolsListed:
         "easyeda_handoff",
         "package_for_jlcpcb",
         "session_resume",
+        "session_confirm_bom",
     }
 
     def test_definitions_match(self):
@@ -562,3 +563,56 @@ class TestErrorsReachTheModel:
                         "spec": {"components": [], "nets": {}},
                     },
                 )
+
+
+class TestSessionConfirmBom:
+    """The BOM checkpoint is the plugin's one guard against spending money on
+    a wrong board, and its approval used to live only in the conversation.
+    `bom_confirmed` was a declared stage with a resume hint that nothing ever
+    set, so a restart mid-flow asked the user to approve the same BOM twice."""
+
+    @pytest.mark.asyncio
+    async def test_advances_the_stage(self, server, tmp_path):
+        from kicad_jlcpcb_mcp import session as session_mod
+
+        await server._handle_tool("create_project", {"parent_dir": str(tmp_path), "name": "demo"})
+        result = await server._handle_tool("session_confirm_bom", {})
+        assert result["confirmed"] is True
+        assert result["stage"] == "bom_confirmed"
+
+        sess = session_mod.load_session(tmp_path / "demo")
+        assert sess["stage"] == "bom_confirmed"
+        assert sess["checkpoints"]["bom_confirmed"] is True
+
+    @pytest.mark.asyncio
+    async def test_survives_a_reload(self, server, tmp_path):
+        """The whole point: a restart must not re-ask for approval."""
+        await server._handle_tool("create_project", {"parent_dir": str(tmp_path), "name": "demo"})
+        await server._handle_tool("session_confirm_bom", {"notes": "user approved"})
+
+        fresh = type(server)()
+        await fresh._handle_tool("load_project", {"project_path": str(tmp_path / "demo")})
+        resumed = await fresh._handle_tool("session_resume", {})
+        assert resumed["stage"] == "bom_confirmed"
+        assert "pcb_generate" in resumed["next_step"]
+
+    @pytest.mark.asyncio
+    async def test_notes_are_carried_into_the_session(self, server, tmp_path):
+        from kicad_jlcpcb_mcp import session as session_mod
+
+        await server._handle_tool("create_project", {"parent_dir": str(tmp_path), "name": "demo"})
+        await server._handle_tool("session_confirm_bom", {"notes": "swapped C1 for a 25V part"})
+        sess = session_mod.load_session(tmp_path / "demo")
+        assert "25V" in sess["notes"]
+
+    @pytest.mark.asyncio
+    async def test_requires_a_project(self, server):
+        with pytest.raises(ValueError, match="project_path or an active project"):
+            await server._handle_tool("session_confirm_bom", {})
+
+    @pytest.mark.asyncio
+    async def test_explains_a_missing_session_file(self, server, tmp_path):
+        d = tmp_path / "bare"
+        d.mkdir()
+        with pytest.raises(ValueError, match="create_project or load_project"):
+            await server._handle_tool("session_confirm_bom", {"project_path": str(d)})

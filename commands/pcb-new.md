@@ -12,6 +12,7 @@ allowed-tools:
   - mcp__kicad-jlcpcb__create_project
   - mcp__kicad-jlcpcb__load_project
   - mcp__kicad-jlcpcb__session_resume
+  - mcp__kicad-jlcpcb__session_confirm_bom
   - mcp__kicad-jlcpcb__lcsc_search
   - mcp__kicad-jlcpcb__lcsc_resolve_bom
   - mcp__kicad-jlcpcb__part_pin_map
@@ -69,6 +70,8 @@ Show the user:
 - Anything in `unresolved`
 
 Ask whether to swap any extended parts for basic alternatives or proceed. **Do not call `pcb_generate` until the user confirms.**
+
+When they confirm, call `session_confirm_bom` before moving on — pass any change they asked for as `notes`. Without it the approval exists only in this conversation, and a Claude Code restart will ask them to approve the same BOM again. Spending money on a board is the one decision here worth making durable.
 
 ### 6. Build the PCB spec
 
