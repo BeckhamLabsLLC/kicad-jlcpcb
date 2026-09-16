@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-16
+
+### Fixed
+- **Pin names written from a datasheet did not resolve.** A datasheet says
+  `GPIO10`; EasyEDA stores `IO10`. A spec written the way anyone would write
+  one failed on every GPIO on the part, and the error — "U1 has no pad
+  'GPIO10'" — pointed at the net name rather than the naming convention.
+  Matching now folds `GPIOn`/`IOn`, `VI`/`VIN`, `VO`/`VOUT`, `VSS`/`GND` and
+  separators, with an exact match always winning.
+- **The shipped example did not build.** Running `examples/soilnode-esp32`
+  end to end produced five unresolved pins. It now generates 13 footprints
+  and 9 nets with **zero errors** in 15 seconds.
+- **Unresolvable pins gave the reader nothing to work with.** Errors now list
+  the part's known pin names and the footprint's actual pads, and when a name
+  resolves to a pad the footprint lacks they say why: EasyEDA numbers pads
+  for its own footprint, and a spec using a KiCad-stdlib footprint may number
+  them differently (SOT-223's tab is 4 to EasyEDA, 2 to KiCad).
+- `pcb_generate` now says when it cannot resolve pin names because
+  `auto_fetch_pinmaps` is off or a component has no `lcsc` field. That case
+  produced the same misleading "no pad" errors as a failed fetch, which was
+  already explained — this was the other half of it.
+
 ## [0.12.0] - 2026-09-16
 
 ### Fixed
@@ -440,7 +462,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.13.0
 [0.12.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.12.0
 [0.11.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.11.0
 [0.10.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.10.0

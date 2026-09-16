@@ -15,8 +15,10 @@ from kicad_jlcpcb_mcp.pcb import (
     MIN_PITCH_MM,
     PcbGenerationError,
     _classify,
+    _normalize_pin,
     _place,
     _refs_needing_pin_names,
+    _resolve_pad,
     _resolve_pinmaps,
     _validate_spec,
     bom_from_components,
@@ -277,7 +279,10 @@ class TestGenerateRealPcb:
         spec["nets"]["VCC"] = [["R1", "99"], ["R2", "1"]]
         out = tmp_path / "badpad.kicad_pcb"
         result = await generate_pcb(spec, out, auto_fetch_pinmaps=False)
-        assert any("has no pad" in e for e in result.errors)
+        # The error names the pin AND what the footprint actually has —
+        # "no pad '99'" alone gives the reader nothing to correct towards.
+        assert any("pin '99'" in e for e in result.errors), result.errors
+        assert any("Footprint pads:" in e for e in result.errors), result.errors
         assert result.net_stats["VCC"] == 1
 
     @pytest.mark.asyncio
@@ -595,3 +600,97 @@ class TestPlacementNeverOverlaps:
             [{"ref": f"R{i}"} for i in range(6)], board_width_mm=30, board_height_mm=30
         )
         assert self._min_pitch(ics) > self._min_pitch(passives)
+
+
+class TestUnresolvablePinNamesAreExplained:
+    """Net assignment emits one "no pad 'VOUT'" error per pin when a map is
+    missing. Read alone those say the caller's net names are wrong, and a
+    model will rewrite a correct netlist chasing them. The cause has to be
+    stated wherever it arises, not only when a fetch fails."""
+
+    @pytest.mark.asyncio
+    async def test_auto_fetch_disabled_is_named_as_the_cause(self):
+        maps, warnings = await _resolve_pinmaps(
+            [{"ref": "U1", "lcsc": "C82942"}],
+            auto_fetch=False,
+            force_refresh=False,
+            needed_refs={"U1"},
+        )
+        assert maps["U1"] == {}
+        assert any("auto_fetch_pinmaps is off" in w for w in warnings)
+        assert any("no pad" in w for w in warnings), "must connect cause to effect"
+
+    @pytest.mark.asyncio
+    async def test_a_missing_lcsc_field_is_named_as_the_cause(self):
+        _, warnings = await _resolve_pinmaps(
+            [{"ref": "U2"}],
+            auto_fetch=True,
+            force_refresh=False,
+            needed_refs={"U2"},
+        )
+        assert any("no 'lcsc' field" in w for w in warnings)
+
+    @pytest.mark.asyncio
+    async def test_parts_wired_by_pad_number_are_not_warned_about(self):
+        """Only refs that actually need a name map are a problem."""
+        _, warnings = await _resolve_pinmaps(
+            [{"ref": "C1", "lcsc": "C1525"}, {"ref": "R1"}],
+            auto_fetch=False,
+            force_refresh=False,
+            needed_refs=set(),
+        )
+        assert warnings == []
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_pinmap_silences_it(self):
+        _, warnings = await _resolve_pinmaps(
+            [{"ref": "U1", "pinmap": {"VOUT": "5"}}],
+            auto_fetch=False,
+            force_refresh=False,
+            needed_refs={"U1"},
+        )
+        assert warnings == []
+
+
+class TestPinNameAliases:
+    """A datasheet says GPIO10 and EasyEDA says IO10. A spec written from
+    the datasheet — which is how anyone writes one — failed on every GPIO
+    on the part. These are naming conventions, not typos, so matching folds
+    them together rather than demanding one spelling."""
+
+    PINMAP = {"IO10": "10", "IO2": "2", "VIN": "1", "VOUT": "2", "GND": "3", "3V3": "5"}
+
+    @pytest.mark.parametrize(
+        "written,expected",
+        [
+            ("GPIO10", "10"),
+            ("IO10", "10"),
+            ("gpio2", "2"),
+            ("VI", "1"),
+            ("VO", "2"),
+            ("vin", "1"),
+            ("GND", "3"),
+            ("3V3", "5"),
+        ],
+    )
+    def test_common_spellings_all_reach_the_right_pad(self, written, expected):
+        assert _resolve_pad(self.PINMAP, written) == expected
+
+    def test_a_bare_pad_number_passes_through(self):
+        """Nets that already use pad numbers must not be rewritten."""
+        assert _resolve_pad(self.PINMAP, "7") == "7"
+
+    def test_an_unknown_name_passes_through_unchanged(self):
+        assert _resolve_pad(self.PINMAP, "NOSUCHPIN") == "NOSUCHPIN"
+
+    def test_separators_are_ignored(self):
+        assert _resolve_pad({"IO_10": "10"}, "GPIO10") == "10"
+
+    def test_an_exact_match_always_wins(self):
+        """Aliasing must never override a name the part actually has."""
+        pinmap = {"VIN": "1", "VI": "9"}
+        assert _resolve_pad(pinmap, "VI") == "9"
+
+    def test_gpio_prefix_only_folds_for_numeric_pins(self):
+        assert _normalize_pin("GPIOCLK") == "gpioclk"
+        assert _normalize_pin("GPIO10") == "io10"

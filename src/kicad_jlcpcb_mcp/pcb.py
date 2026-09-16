@@ -410,6 +410,45 @@ def _add_board_outline(pcb, board, width_mm: float, height_mm: float) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Pin names people write vs pin names EasyEDA stores. These are not
+# typos — a datasheet says GPIO10 and EasyEDA says IO10, so a spec written
+# from the datasheet fails on every GPIO on the part. Matching is done on
+# a normalised form so both spellings land on the same pad.
+_PIN_ALIAS_PREFIXES = (("gpio", "io"),)
+_PIN_ALIASES = {
+    "vi": "vin",
+    "vo": "vout",
+    "vcc": "vdd",
+    "vss": "gnd",
+    "v+": "vcc",
+    "v-": "gnd",
+}
+
+
+def _normalize_pin(name: str) -> str:
+    """Fold a pin name to a form that compares across naming conventions."""
+    n = str(name).strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+    for long_form, short_form in _PIN_ALIAS_PREFIXES:
+        if n.startswith(long_form) and n[len(long_form) :].isdigit():
+            n = short_form + n[len(long_form) :]
+    return _PIN_ALIASES.get(n, n)
+
+
+def _resolve_pad(pinmap: dict[str, str], pin_ref: str) -> str:
+    """Map a net's pin reference onto a pad number.
+
+    Exact match first, then a normalised match, then the reference itself
+    (which is correct when the net already names a bare pad number).
+    """
+    if pin_ref in pinmap:
+        return pinmap[pin_ref]
+    target = _normalize_pin(pin_ref)
+    for name, pad in pinmap.items():
+        if _normalize_pin(name) == target:
+            return pad
+    return pin_ref
+
+
 def _refs_needing_pin_names(nets: dict[str, list[tuple[str, str]]]) -> set[str]:
     """Refs whose nets reference at least one pin by name rather than number.
 
@@ -488,6 +527,24 @@ async def _resolve_pinmaps(
                     f"by your net names. Retry, or supply an explicit 'pinmap'."
                 )
                 logger.warning("Pin-map fetch failed for %s (%s): %s", ref, comp["lcsc"], e)
+        elif needed_refs is not None and ref in needed_refs:
+            # This part's nets reference pins by name and nothing can supply
+            # the map. Without saying so, net assignment emits one
+            # "no pad 'VOUT'" error per pin and the cause is invisible.
+            if not auto_fetch:
+                warnings.append(
+                    f"{ref}: nets reference pins by name but auto_fetch_pinmaps "
+                    f"is off, so no map is available. Any 'no pad <name>' errors "
+                    f"below follow from this. Enable it, or give this component "
+                    f"an explicit 'pinmap'."
+                )
+            else:
+                warnings.append(
+                    f"{ref}: nets reference pins by name but the component has "
+                    f"no 'lcsc' field to look one up with. Add it, or give the "
+                    f"component an explicit 'pinmap'."
+                )
+            resolved[ref] = {}
         else:
             resolved[ref] = {}
     return resolved, warnings
@@ -586,12 +643,37 @@ async def generate_pcb(
             if f is None:
                 errors.append(f"net {net_name}: unknown ref {ref}")
                 continue
-            pad_num = pinmaps.get(ref, {}).get(pin_ref, pin_ref)
+            ref_pinmap = pinmaps.get(ref, {})
+            pad_num = _resolve_pad(ref_pinmap, pin_ref)
             pad = f.FindPadByNumber(pad_num)
             if pad is None:
-                errors.append(
-                    f"net {net_name}: {ref} has no pad {pin_ref!r} (resolved to {pad_num!r})"
-                )
+                # Say what the part *does* have. "no pad 'GPIO10'" on its own
+                # gives the reader nothing to correct towards, and the answer
+                # is usually one spelling away.
+                pads = sorted(p.GetNumber() for p in f.Pads() if p.GetNumber())
+                if ref_pinmap and pad_num != pin_ref:
+                    # The name resolved, but to a pad this footprint does not
+                    # have. That means the pin map (from EasyEDA's own
+                    # footprint) and the footprint in the spec number their
+                    # pads differently — common where a package has a tab,
+                    # e.g. SOT-223 where EasyEDA calls the tab 4 and KiCad's
+                    # SOT-223-3_TabPin2 calls it 2.
+                    detail = (
+                        f"The pin map resolved {pin_ref!r} to pad {pad_num!r}, but "
+                        f"{comp_by_ref.get(ref, {}).get('lib', '?')}:"
+                        f"{comp_by_ref.get(ref, {}).get('fp', '?')} has pads "
+                        f"{', '.join(pads[:12])}. EasyEDA numbers pads for its own "
+                        f"footprint; this spec uses a different one. Give {ref} an "
+                        f"explicit 'pinmap', or reference the pad number directly."
+                    )
+                elif ref_pinmap:
+                    detail = (
+                        f"Known pin names: {', '.join(sorted(ref_pinmap)[:12])}. "
+                        f"Footprint pads: {', '.join(pads[:12])}."
+                    )
+                else:
+                    detail = f"Footprint pads: {', '.join(pads[:12])}."
+                errors.append(f"net {net_name}: {ref} pin {pin_ref!r}. {detail}")
                 continue
             pad.SetNet(net)
             assigned += 1
