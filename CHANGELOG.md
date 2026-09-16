@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-16
+
+### Fixed
+- **A fresh `pip install` produced a server that would not start.** The `mcp`
+  dependency was unbounded (`mcp>=1.0.0`), so a new install resolved mcp 2.x,
+  which removed `Server.list_tools` and renamed `Tool.inputSchema`. The server
+  died on startup with `'Server' object has no attribute 'list_tools'`. Pinned
+  to `mcp>=1.0.0,<2` until the server is ported to the 2.x API.
+
 ## [0.2.0] - 2026-09-16
 
 Repairs a total outage of part sourcing, plus the install path and KiCad
@@ -83,6 +92,7 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.2.1
 [0.2.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.2.0
 [0.1.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.1.0

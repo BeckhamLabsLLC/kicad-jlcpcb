@@ -6,7 +6,7 @@ JLCPCB basic-tier parts, generates schematics, and packages routed boards
 into manufacturing zips ready to upload to JLCPCB.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 
 USAGE = """kicad-jlcpcb {version} — MCP server for KiCad + JLCPCB workflows

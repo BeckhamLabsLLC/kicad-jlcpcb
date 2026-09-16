@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kicad-jlcpcb"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server that generates JLCPCB-ready KiCad PCB projects from descriptions, BOMs, or existing KiCad projects"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -40,7 +40,13 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    # Upper bound is deliberate, not laziness. The server is built on the
+    # low-level `mcp.server.Server` API; mcp 2.x removed `Server.list_tools`
+    # and renamed `Tool.inputSchema`, so the server fails to start on 2.x
+    # with "'Server' object has no attribute 'list_tools'". Without this
+    # bound a fresh `pip install -e .` resolves mcp 2.x and the plugin is
+    # dead on arrival. Port to the 2.x API before lifting it.
+    "mcp>=1.0.0,<2",
     "httpx>=0.27.0",
 ]
 

@@ -23,8 +23,13 @@ class TestToolDefinitions:
 
     def test_each_tool_has_input_schema(self):
         for tool in _tool_definitions():
-            assert tool.inputSchema is not None
-            assert tool.inputSchema["type"] == "object"
+            # Read through the serialised form: mcp 1.x exposes the field
+            # as `inputSchema`, 2.x renamed the attribute to `input_schema`
+            # while keeping `inputSchema` on the wire. The wire name is the
+            # part that actually has to be right.
+            schema = tool.model_dump(by_alias=True)["inputSchema"]
+            assert schema is not None
+            assert schema["type"] == "object"
 
     def test_no_duplicate_tool_names(self):
         names = [t.name for t in _tool_definitions()]

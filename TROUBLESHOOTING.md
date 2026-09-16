@@ -212,6 +212,28 @@ Most common causes:
 
 ---
 
+## Server won't start
+
+### `'Server' object has no attribute 'list_tools'`
+
+You have `mcp` 2.x installed. The server is built on the low-level
+`mcp.server.Server` API, which 2.x reorganised. `pyproject.toml` pins
+`mcp>=1.0.0,<2`; if you installed before that pin landed, or forced a newer
+version:
+
+```bash
+pip install -e . --upgrade
+python -c "import importlib.metadata as m; print(m.version('mcp'))"   # expect 1.x
+```
+
+### `ENOENT: Executable not found in $PATH: kicad-jlcpcb`
+
+You are on an old `.mcp.json` that invoked a bare `kicad-jlcpcb` command.
+Pull the latest — it now launches `python3 -m kicad_jlcpcb_mcp` with
+`PYTHONPATH` set to the plugin root, so nothing needs to be on `PATH`.
+
+---
+
 ## Tests (contributors)
 
 ### `ModuleNotFoundError: No module named 'kicad_jlcpcb_mcp'`
