@@ -194,6 +194,150 @@ def _pinmap_to_cache(lcsc: str, payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+# EasyEDA works in 10-mil units for both symbols and footprints, so one
+# unit is exactly 0.254 mm. Verified against a SOT-23-5: its pads sit
+# 3.74 units apart, and 3.74 * 0.254 = 0.95 mm, the package's real pitch.
+EASYEDA_UNIT_MM = 0.254
+
+# File-format versions for what we emit. These are what KiCad 9/10 write.
+KICAD_SYM_VERSION = "20241209"
+KICAD_MOD_VERSION = "20241229"
+
+
+@dataclass
+class EasyEdaPin:
+    """One symbol pin, in millimetres relative to the symbol origin."""
+
+    number: str
+    name: str
+    x_mm: float
+    y_mm: float
+    rotation: int  # degrees, EasyEDA convention (direction the pin points)
+    electrical: str = "passive"
+
+
+@dataclass
+class EasyEdaPad:
+    """One footprint pad, in millimetres relative to the footprint origin."""
+
+    number: str
+    shape: str  # RECT | ELLIPSE | OVAL | POLYGON
+    x_mm: float
+    y_mm: float
+    width_mm: float
+    height_mm: float
+    layer: int  # EasyEDA layer id: 1 = top copper, 2 = bottom
+    hole_mm: float = 0.0
+    rotation: float = 0.0
+
+    @property
+    def is_smd(self) -> bool:
+        return self.hole_mm <= 0.0
+
+
+def _f(value: str, default: float = 0.0) -> float:
+    """Parse a float from EasyEDA's data, tolerating blanks and junk."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_symbol_pins(shape_list: list) -> list[EasyEdaPin]:
+    """Extract full pin geometry from an EasyEDA symbol `dataStr.shape`.
+
+    A pin entry is `^^`-joined segments::
+
+        P~<show>~<electric>~<id>~<x>~<y>~<rot>~<gge>~<locked>
+         ^^<dot_x>~<dot_y>
+         ^^<path>~<color>
+         ^^<show>~<nx>~<ny>~<nrot>~<NAME>~<anchor>~...
+         ^^<show>~<px>~<py>~<prot>~<NUMBER>~<anchor>~...
+
+    Note the pad number comes from segment 4, not segment 0. Segment 0
+    field 3 is EasyEDA's internal pin *id*, which coincides with the pad
+    number on simple parts and diverges on others — reading it as the pad
+    number silently mis-wires exactly the parts where it matters.
+    """
+    pins: list[EasyEdaPin] = []
+    if not isinstance(shape_list, list):
+        return pins
+    for entry in shape_list:
+        if not isinstance(entry, str) or not entry.startswith("P~"):
+            continue
+        segs = entry.split("^^")
+        if len(segs) < 5:
+            continue
+        head = segs[0].split("~")
+        name_seg = segs[3].split("~")
+        num_seg = segs[4].split("~")
+        if len(head) < 7 or len(name_seg) < 5 or len(num_seg) < 5:
+            continue
+
+        number = num_seg[4].strip() or head[3].strip()
+        if not number:
+            continue
+        pins.append(
+            EasyEdaPin(
+                number=number,
+                name=name_seg[4].strip() or number,
+                x_mm=_f(head[4]) * EASYEDA_UNIT_MM,
+                y_mm=_f(head[5]) * EASYEDA_UNIT_MM,
+                rotation=int(_f(head[6])) % 360,
+            )
+        )
+    return pins
+
+
+def parse_footprint_pads(package_shape: list) -> list[EasyEdaPad]:
+    """Extract pad geometry from an EasyEDA `packageDetail.dataStr.shape`.
+
+    A pad entry is::
+
+        PAD~<shape>~<x>~<y>~<w>~<h>~<layer>~<net>~<number>~<hole_r>
+            ~<points>~<rot>~<gge>~...
+
+    Coordinates are absolute on EasyEDA's canvas (origin near 4000,3000);
+    callers re-centre them with `pads_origin`.
+    """
+    pads: list[EasyEdaPad] = []
+    if not isinstance(package_shape, list):
+        return pads
+    for entry in package_shape:
+        if not isinstance(entry, str) or not entry.startswith("PAD~"):
+            continue
+        f = entry.split("~")
+        if len(f) < 10:
+            continue
+        number = f[8].strip()
+        if not number:
+            continue
+        pads.append(
+            EasyEdaPad(
+                number=number,
+                shape=(f[1] or "RECT").strip().upper(),
+                x_mm=_f(f[2]) * EASYEDA_UNIT_MM,
+                y_mm=_f(f[3]) * EASYEDA_UNIT_MM,
+                width_mm=_f(f[4]) * EASYEDA_UNIT_MM,
+                height_mm=_f(f[5]) * EASYEDA_UNIT_MM,
+                layer=int(_f(f[6], 1)),
+                # EasyEDA stores a hole *radius*; KiCad wants a diameter.
+                hole_mm=_f(f[9]) * EASYEDA_UNIT_MM * 2.0,
+                rotation=_f(f[11]) if len(f) > 11 else 0.0,
+            )
+        )
+    return pads
+
+
+def pads_origin(pads: list[EasyEdaPad]) -> tuple[float, float]:
+    """Centre of the pad bounding box, used to re-zero absolute coordinates."""
+    if not pads:
+        return (0.0, 0.0)
+    xs = [p.x_mm for p in pads]
+    ys = [p.y_mm for p in pads]
+    return ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0)
+
+
 def parse_pinmap_from_shape(shape_list: list) -> dict[str, str]:
     """Extract {pin_name: pin_num} from an EasyEDA dataStr.shape array.
 
@@ -404,156 +548,205 @@ def _safe_id(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in name)
 
 
-def _build_kicad_symbol(lcsc: str, mfr_part: str, description: str, pin_count: int) -> str:
-    """Generate a placeholder KiCad 8 symbol library file.
+def _kicad_pin_angle(easyeda_rotation: int) -> int:
+    """Convert EasyEDA's pin direction to KiCad's.
 
-    A correct KiCad symbol requires the full pin map (positions, names,
-    numbers, electrical type) which EasyEDA stores in a proprietary
-    schematic format that's outside Phase 1's scope. Instead we emit a
-    *generic rectangular* symbol with `pin_count` numbered pins so the
-    user can use it in a schematic and KiCad will accept it for ERC.
+    EasyEDA's angle is the direction the pin points away from the body; a
+    left-edge pin reads 180. KiCad's angle is the direction the pin body
+    extends from its connection point, so the same pin reads 0.
+    """
+    return (180 - int(easyeda_rotation)) % 360
 
-    The symbol library file (`.kicad_sym`) holds one symbol named after
-    the LCSC C-number; we set the LCSC field on the symbol so a future
-    BOM export picks it up.
+
+def build_kicad_symbol(
+    lcsc: str,
+    mfr_part: str,
+    description: str,
+    pins: list[EasyEdaPin],
+    *,
+    pin_count: int = 2,
+) -> str:
+    """Emit a `.kicad_sym` from real EasyEDA pin geometry.
+
+    Earlier releases emitted a rectangle with pins named `P1..Pn`, because
+    the pin data was assumed to be out of reach. It is not: EasyEDA's
+    `dataStr.shape` carries each pin's number, name and position, and this
+    now uses them. That means a schematic can reference `VOUT` and get the
+    right pad.
+
+    Falls back to the old numbered-rectangle behaviour only when EasyEDA
+    returned no pins at all, which happens for some passives.
     """
     symbol_name = _safe_id(lcsc)
-    safe_desc = description.replace('"', "'")
-    safe_mfr = mfr_part.replace('"', "'")
-    half = max(1, pin_count) * 50  # 50 mil per pin spacing
-    pins = []
-    for i in range(1, max(1, pin_count) + 1):
-        # Alternate pins between left side (odd) and right side (even).
-        if i % 2 == 1:
-            x = -300
-            y = half - ((i // 2) * 100)
-            angle = 0
-        else:
-            x = 300
-            y = half - (((i - 1) // 2) * 100)
-            angle = 180
-        pins.append(
-            f"    (pin passive line (at {x} {y} {angle}) (length 100)\n"
-            f'      (name "P{i}" (effects (font (size 1.27 1.27))))\n'
-            f'      (number "{i}" (effects (font (size 1.27 1.27)))))\n'
+    if not pins:
+        pins = [
+            EasyEdaPin(number=str(i + 1), name=str(i + 1), x_mm=0.0, y_mm=0.0, rotation=180)
+            for i in range(max(1, pin_count))
+        ]
+        # Lay the fallback out as a plain two-column rectangle.
+        left = (len(pins) + 1) // 2
+        for i, pin in enumerate(pins):
+            row = i if i < left else i - left
+            pin.x_mm = -8.89 if i < left else 8.89
+            pin.y_mm = -(row * 2.54)
+            pin.rotation = 180 if i < left else 0
+
+    # EasyEDA's symbol Y grows downward; KiCad's grows upward.
+    xs = [p.x_mm for p in pins]
+    ys = [-p.y_mm for p in pins]
+    cx = (min(xs) + max(xs)) / 2.0
+    cy = (min(ys) + max(ys)) / 2.0
+
+    def snap(v: float) -> float:
+        """KiCad refuses to connect pins that are off the 1.27 mm grid."""
+        return round(v / 1.27) * 1.27
+
+    placed = [(p, snap(p.x_mm - cx), snap(-p.y_mm - cy)) for p in pins]
+    half_w = max((abs(x) for _, x, _ in placed), default=5.08) - 2.54
+    half_w = max(half_w, 2.54)
+    half_h = max((abs(y) for _, _, y in placed), default=2.54) + 2.54
+
+    pin_lines = []
+    for pin, x, y in placed:
+        pin_lines.append(
+            f"      (pin passive line\n"
+            f"        (at {x:g} {y:g} {_kicad_pin_angle(pin.rotation)})\n"
+            f"        (length 2.54)\n"
+            f'        (name "{_escape_sexpr(pin.name)}" (effects (font (size 1.27 1.27))))\n'
+            f'        (number "{_escape_sexpr(pin.number)}" (effects (font (size 1.27 1.27))))\n'
+            f"      )"
         )
-    pins_block = "".join(pins)
 
     return (
-        '(kicad_symbol_lib (version 20231120) (generator "kicad_jlcpcb_mcp")\n'
+        "(kicad_symbol_lib\n"
+        f"  (version {KICAD_SYM_VERSION})\n"
+        '  (generator "kicad_jlcpcb_mcp")\n'
         f'  (symbol "{symbol_name}"\n'
-        "    (in_bom yes) (on_board yes)\n"
-        f'    (property "Reference" "U" (at 0 {half + 100} 0) (effects (font (size 1.27 1.27))))\n'
-        f'    (property "Value" "{symbol_name}" (at 0 {half + 50} 0) (effects (font (size 1.27 1.27))))\n'
-        f'    (property "Footprint" "" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))\n'
-        f'    (property "Datasheet" "" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))\n'
-        f'    (property "Description" "{safe_desc}" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))\n'
-        f'    (property "LCSC" "{lcsc}" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))\n'
-        f'    (property "MPN" "{safe_mfr}" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))\n'
+        "    (pin_names (offset 0.762))\n"
+        "    (exclude_from_sim no)\n"
+        "    (in_bom yes)\n"
+        "    (on_board yes)\n"
+        f'    (property "Reference" "U" (at 0 {half_h + 1.27:g} 0)'
+        " (effects (font (size 1.27 1.27))))\n"
+        f'    (property "Value" "{_escape_sexpr(mfr_part or lcsc)}"'
+        f" (at 0 {-(half_h + 1.27):g} 0) (effects (font (size 1.27 1.27))))\n"
+        f'    (property "Description" "{_escape_sexpr(description)}" (at 0 0 0)'
+        " (effects (font (size 1.27 1.27)) (hide yes)))\n"
+        f'    (property "LCSC" "{_escape_sexpr(lcsc)}" (at 0 0 0)'
+        " (effects (font (size 1.27 1.27)) (hide yes)))\n"
         f'    (symbol "{symbol_name}_0_1"\n'
-        f"      (rectangle (start -300 {half}) (end 300 -{half})\n"
+        f"      (rectangle (start {-half_w:g} {half_h:g}) (end {half_w:g} {-half_h:g})\n"
         "        (stroke (width 0.254) (type default))\n"
-        "        (fill (type background)))\n"
+        "        (fill (type background))\n"
+        "      )\n"
         "    )\n"
-        f'    (symbol "{symbol_name}_1_1"\n'
-        f"{pins_block}"
-        "    )\n"
+        f'    (symbol "{symbol_name}_1_1"\n' + "\n".join(pin_lines) + "\n    )\n"
         "  )\n"
         ")\n"
     )
+
+
+def _escape_sexpr(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
 
 # ---------------------------------------------------------------------------
 # Footprint generation
 # ---------------------------------------------------------------------------
 
+# EasyEDA layer ids we care about. 1 is top copper, 2 is bottom.
+_EE_LAYER_TOP = 1
+_EE_LAYER_BOTTOM = 2
 
-def _build_kicad_footprint(lcsc: str, mfr_part: str, package: str, pin_count: int) -> str:
-    """Generate a placeholder KiCad 8 footprint (.kicad_mod).
+_KICAD_PAD_SHAPES = {
+    "RECT": "rect",
+    "ELLIPSE": "circle",
+    "OVAL": "oval",
+    "POLYGON": "rect",
+}
 
-    Like the symbol, this is a *generic* footprint sized for the package
-    family rather than a per-package-correct one. For Phase 1 the user
-    is expected to either:
-      (a) accept the generic footprint and verify it in KiCad before
-          routing, or
-      (b) drop in a hand-picked footprint from KiCad's standard libraries
-          and use this only for the symbol/LCSC linkage.
 
-    Footprint dimensions follow IPC nominals for common SMD packages.
+def build_kicad_footprint(
+    lcsc: str,
+    mfr_part: str,
+    package: str,
+    pads: list[EasyEdaPad],
+    *,
+    pin_count: int = 2,
+) -> str:
+    """Emit a `.kicad_mod` from real EasyEDA pad geometry.
+
+    Earlier releases emitted IPC nominals from a hardcoded table covering
+    0402/0603/0805/1206/SOT-23, and a generic two-row guess for anything
+    else — so any part outside that table got pads that did not match it.
+    EasyEDA ships the actual pad polygons in `packageDetail`, so this uses
+    them: position, size, shape, layer, and drill.
+
+    Falls back to a minimal two-pad placeholder only when EasyEDA returned
+    no pads, and marks the result so callers can warn.
     """
-    name = _safe_id(f"{lcsc}_{package}")
-    pads_block = _generate_pads_for_package(package, pin_count)
+    name = _safe_id(f"{lcsc}_{package}" if package else lcsc)
+
+    if not pads:
+        pads = [
+            EasyEdaPad(
+                number=str(i + 1),
+                shape="RECT",
+                x_mm=(-1.0 if i == 0 else 1.0),
+                y_mm=0.0,
+                width_mm=1.0,
+                height_mm=1.0,
+                layer=_EE_LAYER_TOP,
+            )
+            for i in range(max(2, min(pin_count, 2)))
+        ]
+
+    ox, oy = pads_origin(pads)
+    has_tht = any(not p.is_smd for p in pads)
+
+    lines = []
+    for pad in pads:
+        shape = _KICAD_PAD_SHAPES.get(pad.shape, "rect")
+        x = pad.x_mm - ox
+        y = pad.y_mm - oy
+        w = max(pad.width_mm, 0.05)
+        h = max(pad.height_mm, 0.05)
+        at = f"(at {x:.4f} {y:.4f}{f' {pad.rotation:g}' if pad.rotation else ''})"
+        if pad.is_smd:
+            layer = "F" if pad.layer == _EE_LAYER_TOP else "B"
+            layers = f'(layers "{layer}.Cu" "{layer}.Paste" "{layer}.Mask")'
+            lines.append(
+                f'  (pad "{_escape_sexpr(pad.number)}" smd {shape} {at} '
+                f"(size {w:.4f} {h:.4f}) {layers})"
+            )
+        else:
+            drill = max(pad.hole_mm, 0.2)
+            lines.append(
+                f'  (pad "{_escape_sexpr(pad.number)}" thru_hole {shape} {at} '
+                f'(size {w:.4f} {h:.4f}) (drill {drill:.4f}) (layers "*.Cu" "*.Mask"))'
+            )
+
+    xs = [p.x_mm - ox for p in pads]
+    ys = [p.y_mm - oy for p in pads]
+    hw = (max(xs) - min(xs)) / 2.0 + 0.6
+    hh = (max(ys) - min(ys)) / 2.0 + 0.6
+
     return (
         f'(footprint "{name}"\n'
-        "  (version 20231120)\n"
+        f"  (version {KICAD_MOD_VERSION})\n"
         '  (generator "kicad_jlcpcb_mcp")\n'
         '  (layer "F.Cu")\n'
-        "  (attr smd)\n"
-        f'  (property "Reference" "REF**" (at 0 -3 0) (layer "F.SilkS"))\n'
-        f'  (property "Value" "{name}" (at 0 3 0) (layer "F.Fab"))\n'
-        f"{pads_block}"
-        ")\n"
+        f"  (attr {'through_hole' if has_tht else 'smd'})\n"
+        f'  (property "Reference" "REF**" (at 0 {-hh - 0.8:.3f} 0) (layer "F.SilkS")\n'
+        "    (effects (font (size 1 1) (thickness 0.15)))\n  )\n"
+        f'  (property "Value" "{_escape_sexpr(mfr_part or name)}" (at 0 {hh + 0.8:.3f} 0)'
+        ' (layer "F.Fab")\n'
+        "    (effects (font (size 1 1) (thickness 0.15)))\n  )\n"
+        f"  (fp_rect (start {-hw:.3f} {-hh:.3f}) (end {hw:.3f} {hh:.3f})\n"
+        '    (stroke (width 0.1) (type default)) (fill none) (layer "F.CrtYd"))\n'
+        + "\n".join(lines)
+        + "\n)\n"
     )
-
-
-def _generate_pads_for_package(package: str, pin_count: int) -> str:
-    """Generate IPC-nominal SMD pads for common package families.
-
-    Falls back to a generic SMD pad grid for unknown packages.
-    """
-    pkg = package.upper().strip()
-
-    # 2-pin chip resistors/caps: 0402, 0603, 0805, 1206
-    chip_dimensions = {
-        "0402": (0.6, 0.6, 0.95),
-        "0603": (0.85, 0.85, 1.55),
-        "0805": (1.1, 1.4, 1.85),
-        "1206": (1.2, 1.8, 2.7),
-    }
-    if pkg in chip_dimensions:
-        pad_w, pad_h, pitch = chip_dimensions[pkg]
-        return (
-            f'  (pad "1" smd roundrect (at -{pitch / 2} 0) (size {pad_w} {pad_h}) (layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.25))\n'
-            f'  (pad "2" smd roundrect (at {pitch / 2} 0) (size {pad_w} {pad_h}) (layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.25))\n'
-        )
-
-    # SOT-23 family
-    if pkg.startswith("SOT-23"):
-        n = pin_count or 3
-        pads = []
-        for i in range(n):
-            # Three pins on the wide side, then 2 pins opposite for SOT-23-5
-            if i < (n + 1) // 2:
-                x = -0.95 + (i * 0.95)
-                y = 1.1
-            else:
-                idx = i - (n + 1) // 2
-                x = 0.95 - (idx * 0.95)
-                y = -1.1
-            pads.append(
-                f'  (pad "{i + 1}" smd roundrect (at {x:.3f} {y:.3f}) (size 0.6 0.9) '
-                f'(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.25))\n'
-            )
-        return "".join(pads)
-
-    # Generic SMD grid: rows of `pin_count // 2` pins on each side at 0.5mm pitch
-    n = max(2, pin_count or 2)
-    pitch = 0.5
-    side = max(1, n // 2)
-    pads = []
-    for i in range(n):
-        if i < side:
-            x = -1.5
-            y = -((side - 1) * pitch / 2) + (i * pitch)
-        else:
-            x = 1.5
-            j = i - side
-            y = ((side - 1) * pitch / 2) - (j * pitch)
-        pads.append(
-            f'  (pad "{i + 1}" smd roundrect (at {x:.3f} {y:.3f}) (size 0.3 0.6) '
-            f'(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.25))\n'
-        )
-    return "".join(pads)
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +783,8 @@ async def fetch_part_library(
 
     warnings: list[str] = []
     pin_count = 2  # default for 2-terminal passives
+    ee_pins: list[EasyEdaPin] = []
+    ee_pads: list[EasyEdaPad] = []
     has_3d_model = False
     model_url = ""
     try:
@@ -602,6 +797,10 @@ async def fetch_part_library(
                 pin_count = sum(1 for s in shapes if isinstance(s, str) and s.startswith("P~"))
                 if pin_count == 0:
                     pin_count = 2
+                ee_pins = parse_symbol_pins(shapes)
+                ee_pads = parse_footprint_pads(
+                    ee.get("packageDetail", {}).get("dataStr", {}).get("shape", [])
+                )
             model_block = ee.get("packageDetail", {}).get("dataStr", {}).get("shape", [])
             for block in model_block if isinstance(model_block, list) else []:
                 if isinstance(block, str) and block.startswith("SVGNODE"):
@@ -614,19 +813,34 @@ async def fetch_part_library(
         except PartLibraryError as e:
             warnings.append(
                 f"Could not fetch EasyEDA component data: {e}. "
-                f"Using a generic 2-pin symbol/footprint placeholder."
+                f"Falling back to a generic 2-pin symbol/footprint placeholder — "
+                f"verify both in KiCad before routing."
             )
 
-        symbol_text = _build_kicad_symbol(
+        if not ee_pins:
+            warnings.append(
+                "EasyEDA returned no symbol pins; the symbol is a numbered "
+                "rectangle rather than the real part. Pin names will not resolve."
+            )
+        if not ee_pads:
+            warnings.append(
+                "EasyEDA returned no pad geometry; the footprint is a placeholder "
+                "and will NOT match the real part. Substitute a footprint from "
+                "KiCad's standard libraries before ordering."
+            )
+
+        symbol_text = build_kicad_symbol(
             lcsc=part.lcsc,
             mfr_part=part.mfr_part,
             description=part.description,
+            pins=ee_pins,
             pin_count=pin_count,
         )
-        footprint_text = _build_kicad_footprint(
+        footprint_text = build_kicad_footprint(
             lcsc=part.lcsc,
             mfr_part=part.mfr_part,
             package=part.package,
+            pads=ee_pads,
             pin_count=pin_count,
         )
 

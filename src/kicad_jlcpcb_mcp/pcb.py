@@ -221,13 +221,36 @@ def _validate_spec(spec: dict) -> tuple[dict, list[dict], dict[str, list]]:
 # ---------------------------------------------------------------------------
 
 
+# Reference-designator prefixes, longest first so "SW" is tested before "S".
+# Grouped by where the part wants to live on a board rather than by what it
+# is: connectors belong on an edge, ICs in the middle, passives near
+# whatever they decouple.
+_REF_CLASS = (
+    # Board-edge parts. These are what a user physically plugs into.
+    ("conn", ("USB", "CN", "J", "P", "X")),
+    # Active parts and anything with a keep-out around it.
+    ("ic", ("IC", "U", "Q", "Y", "XT", "M", "K", "T")),
+    # Everything else: two-terminal parts that follow their neighbours.
+    ("passive", ("R", "C", "L", "D", "FB", "F", "TP", "MH", "SW", "S", "B")),
+)
+
+
 def _classify(ref: str) -> str:
-    """Bucket a reference designator by physical size class."""
-    if ref.startswith(("U", "Q", "Y")):
-        return "ic"
-    if ref.startswith("J"):
-        return "conn"
-    return "passive"
+    """Bucket a reference designator by where it wants to sit on the board.
+
+    Matching is longest-prefix-first, which matters more than it looks:
+    "SW1" starts with "S" and would otherwise never reach the switch rule,
+    and "XT1" (crystal) starts with "X" and would be filed as a connector.
+    """
+    token = "".join(ch for ch in ref if not ch.isdigit()).upper()
+    if not token:
+        return "passive"
+    best_class, best_len = "passive", 0
+    for cls, prefixes in _REF_CLASS:
+        for prefix in prefixes:
+            if token.startswith(prefix) and len(prefix) > best_len:
+                best_class, best_len = cls, len(prefix)
+    return best_class
 
 
 def _place(

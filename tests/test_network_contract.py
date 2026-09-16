@@ -167,3 +167,54 @@ class TestEndToEnd:
         )
         assert results, "issue #1's query is broken again"
         assert any("SMB" in p.package.upper() for p in results)
+
+
+class TestEasyEdaGeometryContract:
+    """The symbol and footprint geometry the plugin now depends on.
+
+    If EasyEDA reshapes `dataStr.shape` or `packageDetail`, symbols lose
+    their pin names and footprints lose their pads — and the fallback is a
+    placeholder that silently does not match the real part. These assert
+    the shape of the live payload, never specific dimensions.
+    """
+
+    CANARY_SOT23_5 = "C82942"  # ME6211C33M5G-N, a 5-pin SOT-23-5 LDO
+
+    async def _fetch(self, lcsc):
+        part_library._limiter.last_request_time = 0.0
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as c:
+            return await part_library._fetch_easyeda_raw(lcsc, c)
+
+    async def test_symbol_pins_still_parse_with_names(self):
+        result = await self._fetch(self.CANARY_SOT23_5)
+        pins = part_library.parse_symbol_pins(result["dataStr"]["shape"])
+        assert len(pins) == 5, f"expected 5 pins, got {len(pins)}"
+        names = {p.name for p in pins}
+        assert "VOUT" in names and "VIN" in names, names
+        assert {p.number for p in pins} == {"1", "2", "3", "4", "5"}
+
+    async def test_footprint_pads_still_parse_with_real_dimensions(self):
+        result = await self._fetch(self.CANARY_SOT23_5)
+        pads = part_library.parse_footprint_pads(result["packageDetail"]["dataStr"]["shape"])
+        assert len(pads) == 5, f"expected 5 pads, got {len(pads)}"
+        # SOT-23-5 pitch is 0.95 mm. If the unit scale changes upstream,
+        # every footprint silently comes out the wrong size.
+        xs = sorted({round(p.x_mm, 3) for p in pads})
+        assert abs((xs[1] - xs[0]) - 0.95) < 0.05, f"pitch looks wrong: {xs}"
+        assert all(p.is_smd for p in pads)
+
+    async def test_emitted_footprint_is_loadable_by_kicad(self, tmp_path):
+        """End to end: live EasyEDA data through our emitter into pcbnew."""
+        pytest.importorskip("pcbnew")
+        import pcbnew
+
+        result = await self._fetch(self.CANARY_SOT23_5)
+        pads = part_library.parse_footprint_pads(result["packageDetail"]["dataStr"]["shape"])
+        text = part_library.build_kicad_footprint("C82942", "ME6211", "SOT-23-5", pads)
+        pretty = tmp_path / "t.pretty"
+        pretty.mkdir()
+        # KiCad requires the filename to match the footprint name.
+        (pretty / "C82942_SOT-23-5.kicad_mod").write_text(text)
+        fp = pcbnew.FootprintLoad(str(pretty), "C82942_SOT-23-5")
+        assert fp is not None, "KiCad could not load the generated footprint"
+        assert len(list(fp.Pads())) == 5

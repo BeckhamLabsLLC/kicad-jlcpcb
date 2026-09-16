@@ -185,13 +185,21 @@ class TestPackageForJlcpcb:
         async def fake_export_pos(pcb_path, output_path):
             from pathlib import Path
 
-            Path(output_path).write_text("Ref,Val,Pkg,X,Y,Rot,Side\n")
+            # Exactly what kicad-cli writes, including a bottom-side part.
+            Path(output_path).write_text(
+                "Ref,Val,Package,PosX,PosY,Rot,Side\n"
+                '"R1","10k","R_0603",1.500000,-2.500000,90.000000,top\n'
+                '"C1","100nF","C_0402",4.000000,-2.500000,0.000000,bottom\n'
+            )
             return {"output_path": str(output_path)}
 
         async def fake_sch_export_bom(sch_path, output_path):
             from pathlib import Path
 
-            Path(output_path).write_text("Ref,Val,LCSC\n")
+            Path(output_path).write_text(
+                '"Reference","Value","Footprint","LCSC"\n'
+                '"R1","10k","Resistor_SMD:R_0603","C25804"\n'
+            )
             return {"output_path": str(output_path)}
 
         monkeypatch.setattr(kicad_cli, "pcb_export_gerbers", fake_export_gerbers)
@@ -204,10 +212,42 @@ class TestPackageForJlcpcb:
         assert "demo" in result["zip_path"]
         # 9 gerbers + 1 drill + 1 cpl + 1 bom = 12
         assert result["file_count"] == 12
-        assert result["warnings"] == []
+        # The rotation caveat is reported — JLCPCB's expected orientation
+        # differs from KiCad's for some packages.
+        assert any("assembly preview" in w for w in result["warnings"])
+
+        # The CPL in the zip must be JLCPCB's format, not KiCad's.
+        import zipfile
+
+        with zipfile.ZipFile(result["zip_path"]) as z:
+            cpl_name = next(n for n in z.namelist() if n.endswith("-cpl.csv"))
+            cpl = z.read(cpl_name).decode()
+        lines = cpl.strip().splitlines()
+        assert lines[0] == "Designator,Mid X,Mid Y,Layer,Rotation"
+        assert "R1,1.500000,-2.500000,Top,90.000000" in lines
+        assert "C1,4.000000,-2.500000,Bottom,0.000000" in lines
+        assert "PosX" not in cpl, "KiCad's own column names must not survive"
+
+        # Same for the BOM: JLCPCB keys on Comment/Designator/LCSC Part #.
+        with zipfile.ZipFile(result["zip_path"]) as z:
+            bom_name = next(n for n in z.namelist() if n.endswith("-bom.csv"))
+            bom = z.read(bom_name).decode()
+        assert bom.splitlines()[0] == "Comment,Designator,Footprint,LCSC Part #"
+        assert "C25804" in bom
+        assert "Reference" not in bom
         # Steps recorded — BOM now comes from schematic via sch_export_bom
         step_names = [s["step"] for s in result["steps"]]
-        assert step_names == ["export_gerbers", "export_drill", "export_pos", "export_bom_from_sch"]
+        assert step_names == [
+            "export_gerbers",
+            "export_drill",
+            "export_pos",
+            # kicad-cli writes Ref,Val,Package,PosX,PosY,Rot,Side; JLCPCB
+            # needs Designator,Mid X,Mid Y,Layer,Rotation. Skipping this
+            # step ships a CPL JLCPCB rejects.
+            "convert_cpl_to_jlcpcb",
+            "export_bom_from_sch",
+            "convert_bom_to_jlcpcb",
+        ]
 
 
 class TestBomFallbackWhenThereIsNoSchematic:

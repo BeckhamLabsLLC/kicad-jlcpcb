@@ -470,3 +470,40 @@ class TestPinMapFetchIsSkippedWhenUseless:
         needed = _refs_needing_pin_names(nets)
         with_lcsc = [c for c in spec["components"] if c.get("lcsc") and not c.get("pinmap")]
         assert len(needed) < len(with_lcsc) / 2, "most parts should not need a fetch"
+
+
+class TestRefdesClassification:
+    """Placement buckets parts by where they want to sit on a board.
+    Prefix matching is longest-first, which is load-bearing: "SW1" starts
+    with "S", and "XT1" (a crystal) starts with "X", so a naive
+    first-match rule files a crystal as a connector."""
+
+    @pytest.mark.parametrize("ref", ["U1", "U12", "IC3", "Q1", "Y1", "XT1", "K1", "T1"])
+    def test_active_parts(self, ref):
+        assert _classify(ref) == "ic"
+
+    @pytest.mark.parametrize("ref", ["J1", "J10", "CN2", "USB1", "P3", "X1"])
+    def test_board_edge_parts(self, ref):
+        assert _classify(ref) == "conn"
+
+    @pytest.mark.parametrize("ref", ["R1", "C5", "L2", "D4", "FB1", "SW1", "TP7", "MH1"])
+    def test_two_terminal_and_mechanical(self, ref):
+        assert _classify(ref) == "passive"
+
+    def test_crystal_is_not_a_connector(self):
+        """XT1 starts with X, the auxiliary-connector prefix."""
+        assert _classify("XT1") == "ic"
+        assert _classify("X1") == "conn"
+
+    def test_usb_connector_is_not_a_passive(self):
+        """USB1 starts with U, which alone would read as an IC."""
+        assert _classify("USB1") == "conn"
+
+    def test_unknown_and_empty_refs_are_safe(self):
+        assert _classify("Z9") == "passive"
+        assert _classify("") == "passive"
+        assert _classify("123") == "passive"
+
+    def test_case_insensitive(self):
+        assert _classify("u1") == "ic"
+        assert _classify("usb1") == "conn"

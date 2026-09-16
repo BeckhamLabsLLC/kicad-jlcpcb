@@ -291,8 +291,7 @@ class KicadJlcpcbServer:
         """
         from pathlib import Path
 
-        from . import gerber_pack, kicad_cli
-        from . import pcb as pcb_mod
+        from . import gerber_pack, jlcpcb_format, kicad_cli
         from . import session as session_mod
 
         proj = self._require_active_project()
@@ -317,10 +316,19 @@ class KicadJlcpcbServer:
         steps.append({"step": "export_drill", **drill_result})
 
         cpl_warning = None
+        extra_warnings: list[str] = []
         try:
-            cpl_result = await kicad_cli.pcb_export_pos(pcb_path, cpl_out)
+            raw_pos = cpl_out.with_name(cpl_out.stem + "-kicad.csv")
+            cpl_result = await kicad_cli.pcb_export_pos(pcb_path, raw_pos)
             steps.append({"step": "export_pos", **cpl_result})
-        except kicad_cli.KicadCliError as e:
+            # kicad-cli writes Ref,Val,Package,PosX,PosY,Rot,Side; JLCPCB
+            # wants Designator,Mid X,Mid Y,Layer,Rotation. Uploading
+            # KiCad's file unconverted gets it rejected or misread.
+            conv = jlcpcb_format.convert_cpl(raw_pos, cpl_out)
+            steps.append({"step": "convert_cpl_to_jlcpcb", **conv})
+            extra_warnings.extend(conv.get("warnings", []))
+            raw_pos.unlink(missing_ok=True)
+        except (kicad_cli.KicadCliError, jlcpcb_format.JlcpcbFormatError) as e:
             cpl_warning = f"CPL export failed (continuing without it): {e}"
             cpl_out = None  # type: ignore
 
@@ -331,9 +339,16 @@ class KicadJlcpcbServer:
         sch_path = Path(proj["sch_path"])
         if sch_path.is_file():
             try:
-                bom_result = await kicad_cli.sch_export_bom(sch_path, bom_out)
+                raw_bom = bom_out.with_name(bom_out.stem + "-kicad.csv")
+                bom_result = await kicad_cli.sch_export_bom(sch_path, raw_bom)
                 steps.append({"step": "export_bom_from_sch", **bom_result})
-            except kicad_cli.KicadCliError as e:
+                # KiCad writes Reference,Value,Footprint,LCSC,...; JLCPCB
+                # keys on Comment,Designator,Footprint,LCSC Part #.
+                conv_bom = jlcpcb_format.convert_bom(raw_bom, bom_out)
+                steps.append({"step": "convert_bom_to_jlcpcb", **conv_bom})
+                extra_warnings.extend(conv_bom.get("warnings", []))
+                raw_bom.unlink(missing_ok=True)
+            except (kicad_cli.KicadCliError, jlcpcb_format.JlcpcbFormatError) as e:
                 bom_warning = f"BOM export from schematic failed (continuing without it): {e}"
                 bom_out = None  # type: ignore
         else:
@@ -347,8 +362,9 @@ class KicadJlcpcbServer:
             if sess:
                 spec_components = (sess.get("spec") or {}).get("components") or []
             if spec_components:
-                bom_result = pcb_mod.bom_from_components(spec_components, bom_out)
+                bom_result = jlcpcb_format.write_bom(spec_components, bom_out)
                 steps.append({"step": "export_bom_from_session_spec", **bom_result})
+                extra_warnings.extend(bom_result.get("warnings", []))
             else:
                 bom_warning = (
                     "No schematic and no recorded component spec, so no BOM was "
@@ -370,7 +386,7 @@ class KicadJlcpcbServer:
             bom_path=bom_out,
         )
 
-        warnings = list(pack_result.warnings)
+        warnings = list(pack_result.warnings) + extra_warnings
         if cpl_warning:
             warnings.append(cpl_warning)
         if bom_warning:
@@ -528,9 +544,13 @@ def _tool_definitions() -> list[Tool]:
             description=(
                 "Download symbol + footprint (and 3D model when available) "
                 "for a single LCSC C-number and install them into the active "
-                "project's libs/ directory. EasyEDA component data is the "
-                "source of truth; if EasyEDA is unreachable, falls back to a "
-                "generic symbol/footprint with a warning."
+                "project's libs/ directory. Geometry comes from EasyEDA: real "
+                "pin names and numbers for the symbol, real pad positions, "
+                "sizes and drills for the footprint. If EasyEDA is unreachable "
+                "or has no geometry for the part, a placeholder is written "
+                "instead and the response says so in `warnings` — read them, "
+                "because a placeholder footprint will NOT match the real part "
+                "and must be replaced before ordering."
             ),
             inputSchema={
                 "type": "object",

@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-16
+
+Three things that looked finished and were not: the libraries were
+fabricated, the manufacturing files were in the wrong format, and placement
+misread half the reference designators.
+
+### Fixed
+- **Symbols and footprints were invented, not fetched.** `fetch_part_library`
+  used EasyEDA only to *count* pins, then emitted a rectangle with pins named
+  `P1..Pn` and pads from a hardcoded IPC table covering
+  0402/0603/0805/1206/SOT-23 — with a generic two-row guess for everything
+  else. Any part outside that table got pads that did not match it, and the
+  tool description called EasyEDA "the source of truth".
+
+  EasyEDA ships the real geometry and it is now used: pin numbers, names and
+  positions from `dataStr.shape`, and pad positions, sizes, shapes, layers and
+  drills from `packageDetail`. A generated SOT-23-5 now loads in `pcbnew` with
+  0.95 mm pitch matching KiCad's own. When EasyEDA has no geometry, the
+  placeholder is still written — but the response now says, in `warnings`,
+  that it will not match the real part.
+
+- **The CPL was not in JLCPCB's format.** `kicad-cli pcb export pos` writes
+  `Ref,Val,Package,PosX,PosY,Rot,Side`; JLCPCB needs
+  `Designator,Mid X,Mid Y,Layer,Rotation` with `Top`/`Bottom` capitalised.
+  Every zip this plugin has ever produced carried a placement file JLCPCB
+  rejects or misreads.
+- **The BOM was not in JLCPCB's format either** — KiCad's
+  `Reference,Value,Footprint,LCSC,...` instead of
+  `Comment,Designator,Footprint,LCSC Part #`. Both are converted now, and a
+  conversion that cannot find the columns it needs fails loudly rather than
+  shipping a file that would be silently misread.
+- **Placement misclassified common reference designators.** Matching was
+  first-prefix-wins, so `XT1` (a crystal) was filed as a connector because it
+  starts with `X`, `USB1` as an IC because it starts with `U`, and `SW1` never
+  reached the switch rule at all. Matching is longest-prefix-first now and
+  covers the IEEE 315 prefixes.
+
+### Added
+- `jlcpcb_format.py` — the KiCad-to-JLCPCB column conversions, as pure text
+  transforms that are testable without KiCad.
+- Live contract tests for EasyEDA's symbol and footprint geometry, including
+  one that runs live upstream data through the emitter into `pcbnew`. If
+  EasyEDA reshapes its payload, symbols lose their pin names and footprints
+  lose their pads, and the fallback silently does not match the real part.
+
+### Known limitation
+- CPL rotations are passed through as the board has them. JLCPCB's expected
+  orientation differs from KiCad's for some packages, and correcting it needs
+  a per-package table maintained by hand. Footprints generated from EasyEDA
+  share JLCPCB's convention; footprints taken from KiCad's standard libraries
+  may not. `package_for_jlcpcb` says so in `warnings` rather than applying a
+  guess — check JLCPCB's assembly preview after upload.
+
 ## [0.5.0] - 2026-09-16
 
 ### Fixed
@@ -243,7 +296,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.6.0
 [0.5.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.5.0
 [0.4.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.4.0
 [0.3.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.3.0
