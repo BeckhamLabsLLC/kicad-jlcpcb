@@ -1,7 +1,7 @@
 ---
 description: Part numbers are sourced from the LCSC catalog, not recalled or invented.
 tags: [core, sourcing]
-runs: 2
+runs: 1
 max_turns: 14
 allowed_tools: [Read, Glob, Grep, Skill, Task]
 expected_outcome: Claude searches LCSC and reports C-numbers with tier and stock, rather than quoting part numbers from memory.

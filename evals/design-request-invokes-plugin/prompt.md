@@ -1,7 +1,7 @@
 ---
 description: A "design me a board" request builds a project, not an essay about building one.
 tags: [core, invocation]
-runs: 2
+runs: 1
 max_turns: 20
 timeout_seconds: 600
 # No Task: /pcb-new can fan out one part-sourcer agent per component, and on a

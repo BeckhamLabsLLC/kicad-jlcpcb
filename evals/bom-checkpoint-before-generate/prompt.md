@@ -1,7 +1,7 @@
 ---
 description: The BOM is shown and confirmed before a board is generated — the one hard checkpoint.
 tags: [core, checkpoint, cost]
-runs: 2
+runs: 1
 max_turns: 16
 allowed_tools: [Read, Glob, Grep, Skill, Task]
 expected_outcome: Claude presents the resolved BOM with tiers and the setup-fee total and waits, rather than generating the board in the same turn.

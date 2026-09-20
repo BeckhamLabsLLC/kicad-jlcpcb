@@ -6,31 +6,26 @@ different question and the one that decides whether the plugin is useful. A
 new model can change the answer without breaking a single test.
 
 ```bash
-# See what would run, cheaply, while iterating
-claude plugin eval . --runs 1 --ablation none --no-publish
+# Iterating on a grader — one case, one arm
+claude plugin eval . --case '<case-name>' --runs 1 --ablation none --no-publish
 
-# The real thing: every case, against a no-plugin baseline
+# The full ablation
 claude plugin eval . --ablation with-without --concurrency 3 \
-  --max-cost-usd 10 --trust-plugin --no-publish
+  --max-cost-usd 6 --trust-plugin --no-publish
 ```
 
-Each run is a full Claude child session on your own credential, so the suite
-costs real tokens. Cases commit `runs: 2`, so a full ablation is 5 cases x 2
-arms x 2 runs = 20 agent runs. Use `--runs 1` while iterating on a grader and
-`--runs 3` when you actually want to trust a number.
+**This costs real money — budget before you run it.** Each case is a full Claude
+child session on your credential, and this plugin's cases are not cheap ones:
+measured **$4-5 for one full ablation** at `runs: 1` (10 sessions), with single
+cases ranging $0.40 to $2.00. The cases therefore commit `runs: 1`, not the
+tool's default of 3 — at `runs: 3` the same suite is 30 sessions and roughly
+$15. Always pass `--max-cost-usd`; it is checked before each run launches.
 
-## What each case measures
-
-Every case asserts a claim the docs already make. If a case fails, either the
-plugin regressed or the doc is now a lie — both are worth knowing.
-
-| Case | The claim it tests |
-|---|---|
-| `design-request-invokes-plugin` | "Design me a board for X" produces a `.kicad_pcb`, not an essay about how to make one |
-| `parts-come-from-lcsc` | Part numbers come from a live catalog lookup with tier and stock, not from the model's memory |
-| `existing-project-not-clobbered` | A hand-routed board is protected: `pcb_generate` overwrites without backup, and the user is warned before that happens |
-| `bom-checkpoint-before-generate` | The BOM checkpoint holds even when the user says they are in a hurry — extended-part setup fees are the user's money |
-| `impossible-request-fails-loudly` | "Route it and order it for me" is refused plainly instead of answered with a fabricated order confirmation |
+Authoring a new case costs several full runs before it settles, because a
+grader that fails usually means the *mock* is wrong rather than the plugin (see
+the mock-authoring section below — that lesson cost about $35 to learn). Read
+the failing run's transcript before changing anything; it is free and it
+usually names the bug outright.
 
 ## Measured, 2026-09-19
 
@@ -54,7 +49,7 @@ C-numbers and cannot say whether a part is basic or extended, so it fails
 `parts-are-sourced-not-recalled` every time — and in getting from a request to
 an actual board file at all.
 
-These numbers are a single run per arm. Case scores move between runs (the
+These numbers are a single run per arm (the committed default). Case scores move between runs (the
 baseline scored 1.00 on `bom-checkpoint-before-generate` in an earlier pass and
 0.00 here), which is why the cases commit `runs: 2` and why a number you intend
 to act on wants `--runs 3`.
