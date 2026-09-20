@@ -1,0 +1,50 @@
+# The plugin's declarative surface — manifests, skills, commands, agents — is
+# not Python, so nothing in the pytest suite or the ruff job looks at it. It is
+# also where the plugin broke for everyone who installed it the documented way.
+#
+# Note that `claude plugin validate .` only validates marketplace.json when a
+# marketplace manifest is present: its JSON report comes back with
+# "contents": []. The plugin manifest and the components have to be named
+# explicitly, which is why this job runs five invocations rather than one.
+name: plugin
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Validate plugin manifest
+        run: claude plugin validate .claude-plugin/plugin.json --strict
+
+      - name: Validate marketplace manifest
+        run: claude plugin validate .claude-plugin/marketplace.json --strict
+
+      - name: Validate skills
+        run: claude plugin validate ./skills --strict
+
+      - name: Validate commands
+        run: claude plugin validate ./commands --strict
+
+      - name: Validate agents
+        run: claude plugin validate ./agents --strict
+
+      # The eval suite is deliberately NOT run here: every case is a real
+      # Claude session on a real credential, so it costs money per commit.
+      # Run it by hand before a release — see evals/README.md.

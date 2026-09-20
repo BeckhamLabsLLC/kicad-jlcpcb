@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kicad-jlcpcb"
-version = "0.15.0"
+version = "0.16.0"
 description = "MCP server that generates JLCPCB-ready KiCad PCB projects from descriptions, BOMs, or existing KiCad projects"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -62,7 +62,10 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
-    "ruff>=0.1.0",
+    # Pinned to the exact version lint.yml and .pre-commit-config.yaml use.
+    # An unpinned range meant a local `ruff format` could reformat files
+    # that CI then rejected, or vice versa.
+    "ruff==0.15.0",
 ]
 
 [project.scripts]
@@ -74,6 +77,11 @@ packages = ["src/kicad_jlcpcb_mcp"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
+    # bin/launch.py is what .mcp.json runs; scripts/check_protocol.py is how
+    # you tell whether the server actually came up. Neither is importable
+    # from the package, so both have to be listed to survive an sdist.
+    "/bin",
+    "/scripts",
     "/README.md",
     "/LICENSE",
     "/CHANGELOG.md",

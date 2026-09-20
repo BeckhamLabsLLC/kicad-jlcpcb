@@ -3,23 +3,41 @@ name: pcb-from-bom
 description: Start a PCB project from an existing LCSC BOM file (CSV with C-numbers) and a design-intent description.
 argument-hint: "[path to BOM CSV] [optional: design intent notes]"
 allowed-tools:
+  # Each MCP tool is listed twice on purpose. A server from a project
+  # .mcp.json is exposed as mcp__<server>__<tool>, but the same server
+  # provided by an installed plugin is mcp__plugin_<plugin>_<server>__<tool>.
+  # Listing only the short form meant this command ran with no MCP tools at
+  # all for anyone who installed from the marketplace, and answered in prose.
   - Read
   - Write
   - Glob
   - Grep
   - mcp__kicad-jlcpcb__detect_kicad
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__detect_kicad
   - mcp__kicad-jlcpcb__create_project
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__create_project
   - mcp__kicad-jlcpcb__load_project
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__load_project
   - mcp__kicad-jlcpcb__session_resume
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__session_resume
   - mcp__kicad-jlcpcb__session_confirm_bom
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__session_confirm_bom
   - mcp__kicad-jlcpcb__lcsc_resolve_bom
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__lcsc_resolve_bom
   - mcp__kicad-jlcpcb__part_pin_map
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__part_pin_map
   - mcp__kicad-jlcpcb__pcb_generate
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__pcb_generate
   - mcp__kicad-jlcpcb__fetch_part_library
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__fetch_part_library
   - mcp__kicad-jlcpcb__sch_generate
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__sch_generate
   - mcp__kicad-jlcpcb__sch_run_erc
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__sch_run_erc
   - mcp__kicad-jlcpcb__package_for_jlcpcb
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__package_for_jlcpcb
   - mcp__kicad-jlcpcb__easyeda_handoff
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__easyeda_handoff
 ---
 
 # /pcb-from-bom

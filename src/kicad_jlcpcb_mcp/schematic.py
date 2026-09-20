@@ -30,7 +30,7 @@ spec, and which passes ERC apart from genuinely unconnected pins.
 global labels sharing a name are electrically one net in KiCad, so the
 netlist is correct without solving schematic wire routing — which is a
 layout problem, not a netlist one. The result is not pretty; it is
-correct, and the pretty version is Phase 2's job.
+correct; laying it out prettily is not this module's job.
 
 Three things here are load-bearing and easy to break, each of which made
 earlier output unloadable or silently unconnected:

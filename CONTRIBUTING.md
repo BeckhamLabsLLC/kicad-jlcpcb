@@ -12,7 +12,7 @@ source .venv/bin/activate       # Windows: .\.venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-After the editable install the `kicad-jlcpcb` entry-point script is on your `PATH` — that's the same script `.mcp.json` calls, so local changes take effect immediately.
+The editable install puts the `kicad-jlcpcb` entry-point script on your `PATH`, which is handy for poking at the server by hand. Note it is *not* what `.mcp.json` runs — that is `bin/launch.py`, which imports the package from `src/` next to itself, so local changes take effect immediately either way.
 
 ## Running tests
 

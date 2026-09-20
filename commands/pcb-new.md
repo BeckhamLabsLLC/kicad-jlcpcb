@@ -3,25 +3,44 @@ name: pcb-new
 description: Start a new PCB project from a text description. Sources parts, generates a wired .kicad_pcb, and hands off to EasyEDA for routing + JLCPCB ordering.
 argument-hint: "[short description of the board you want to design]"
 allowed-tools:
+  # Each MCP tool is listed twice on purpose. A server from a project
+  # .mcp.json is exposed as mcp__<server>__<tool>, but the same server
+  # provided by an installed plugin is mcp__plugin_<plugin>_<server>__<tool>.
+  # Listing only the short form meant this command ran with no MCP tools at
+  # all for anyone who installed from the marketplace, and answered in prose.
   - Read
   - Write
   - Glob
   - Grep
   - Task
   - mcp__kicad-jlcpcb__detect_kicad
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__detect_kicad
   - mcp__kicad-jlcpcb__create_project
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__create_project
   - mcp__kicad-jlcpcb__load_project
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__load_project
   - mcp__kicad-jlcpcb__session_resume
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__session_resume
   - mcp__kicad-jlcpcb__session_confirm_bom
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__session_confirm_bom
   - mcp__kicad-jlcpcb__lcsc_search
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__lcsc_search
   - mcp__kicad-jlcpcb__lcsc_resolve_bom
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__lcsc_resolve_bom
   - mcp__kicad-jlcpcb__part_pin_map
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__part_pin_map
   - mcp__kicad-jlcpcb__pcb_generate
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__pcb_generate
   - mcp__kicad-jlcpcb__fetch_part_library
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__fetch_part_library
   - mcp__kicad-jlcpcb__sch_generate
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__sch_generate
   - mcp__kicad-jlcpcb__sch_run_erc
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__sch_run_erc
   - mcp__kicad-jlcpcb__package_for_jlcpcb
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__package_for_jlcpcb
   - mcp__kicad-jlcpcb__easyeda_handoff
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__easyeda_handoff
 ---
 
 # /pcb-new
@@ -29,6 +48,11 @@ allowed-tools:
 Take a text description of a PCB and deliver a ready-to-import KiCad board file the user drags into EasyEDA for routing and ordering.
 
 ## Instructions
+
+> **`pcb_generate` overwrites the project's `.kicad_pcb`.** It rebuilds the
+> board from scratch and saves over the existing file — no merge, no backup. If
+> the project already has a board the user may have opened in KiCad, say so and
+> confirm before re-running.
 
 ### 1. Detect KiCad
 
@@ -130,7 +154,7 @@ If there are genuine errors, fix the spec and re-run.
 
 Call `sch_generate` with a netlist spec derived from the same components and nets, then `sch_run_erc`.
 
-The schematic is not required for the board — `pcb_generate` already produced it — but it gives the user something to open and check, and ERC catches connectivity mistakes the PCB stage cannot. Expect `lib_symbol_issues` warnings: the symbols are embedded in the file rather than installed as a library, which is normal and harmless.
+The schematic is not required for the board — `pcb_generate` already produced it — but it gives the user something to open and check, and ERC catches connectivity mistakes the PCB stage cannot. Expect warnings about symbols not being installed as a library — they are embedded in the file instead, which is normal and harmless.
 
 Report the ERC result honestly. An unconnected pin is a real finding worth surfacing, not noise to skip past.
 
@@ -144,6 +168,7 @@ Call `easyeda_handoff`. Relay the response verbatim to the user — specifically
 
 - The path to the generated `.kicad_pcb`
 - The step-by-step EasyEDA import instructions
+- The `before_you_order` checklist — do not summarise or drop this one, it is the last thing the user reads before spending money
 - The `why_easyeda` explanation
 - The `alternative` KiCad-based flow if they'd rather not use EasyEDA
 

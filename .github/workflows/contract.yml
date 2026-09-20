@@ -42,3 +42,36 @@ jobs:
         env:
           KJLC_NETWORK_TESTS: "1"
         run: pytest tests/test_network_contract.py -v --tb=short
+
+      # The job already requested `issues: write` but never used it, so a
+      # weekly failure showed up only as a red tick nobody was watching for.
+      # Part sourcing being broken for every user is worth an issue.
+      - name: Open an issue if upstream drifted
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const title = 'Upstream contract tests are failing';
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'upstream',
+            });
+            if (open.some((i) => i.title === title)) return;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              labels: ['upstream', 'bug'],
+              body: [
+                'The weekly upstream contract run failed, which means part',
+                'sourcing is probably broken for every user — this is how',
+                'issue #1 went unnoticed for four months.',
+                '',
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                '',
+                'Check whether the response *shape* changed before assuming',
+                'the service is merely down.',
+              ].join('\n'),
+            });

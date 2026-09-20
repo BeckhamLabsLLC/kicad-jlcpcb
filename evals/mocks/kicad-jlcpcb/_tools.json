@@ -1,0 +1,326 @@
+{
+  "tools": [
+    {
+      "name": "detect_kicad",
+      "description": "Detect the local KiCad install. Returns version, path, and whether it meets the minimum required version. On a missing or outdated install, returns an install_hint with platform-specific guidance. Never runs installs itself.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "create_project",
+      "description": "Scaffold a new KiCad project at <parent_dir>/<name>/ with a .kicad_pro carrying JLCPCB-tuned design rules, an empty .kicad_sch, and libs/ + manufacturing/ subdirectories. Sets the new project as the active session workspace.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "parent_dir": {
+            "type": "string",
+            "description": "Existing directory under which to create the project folder."
+          },
+          "name": {
+            "type": "string",
+            "description": "Project name. Letters, digits, underscore, hyphen only. Becomes both the folder name and the .kicad_pro/.kicad_sch stem."
+          }
+        },
+        "required": [
+          "parent_dir",
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "load_project",
+      "description": "Load an existing KiCad project (path to a .kicad_pro file or its containing directory). Validates the manifest, ensures libs/ and manufacturing/ subdirectories exist, and sets the project as the active session workspace. Returns a manifest of the project's current state.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_path": {
+            "type": "string",
+            "description": "Path to a .kicad_pro file OR the directory containing exactly one .kicad_pro file."
+          }
+        },
+        "required": [
+          "project_path"
+        ]
+      }
+    },
+    {
+      "name": "lcsc_search",
+      "description": "Search the LCSC / JLCPCB catalog for parts matching a free-text query. Defaults to basic-tier parts only (no JLCPCB assembly setup fee). Set basic_only=false to include extended parts. Results are sorted basic-first then by descending stock.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 2,
+            "description": "Free-text search, e.g. '10k 0603 1%' or 'ESP32-S3-WROOM'."
+          },
+          "package": {
+            "type": "string",
+            "description": "Optional package filter, e.g. '0603', 'SOT-23-5', 'QFN-32'."
+          },
+          "basic_only": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true (default), exclude extended-tier parts entirely."
+          },
+          "stock_min": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 1,
+            "description": "Minimum JLCPCB SMT stock to include a result."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20,
+            "description": "Maximum number of results to return."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "fetch_part_library",
+      "description": "Download symbol + footprint (and 3D model when available) for a single LCSC C-number and install them into the active project's libs/ directory. Geometry comes from EasyEDA: real pin names and numbers for the symbol, real pad positions, sizes and drills for the footprint. If EasyEDA is unreachable or has no geometry for the part, a placeholder is written instead and the response says so in `warnings` \u2014 read them, because a placeholder footprint will NOT match the real part and must be replaced before ordering.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lcsc": {
+            "type": "string",
+            "description": "LCSC C-number, e.g. 'C25804'."
+          },
+          "libs_dir": {
+            "type": "string",
+            "description": "Optional override for the install directory. Defaults to the active project's libs/."
+          }
+        },
+        "required": [
+          "lcsc"
+        ]
+      }
+    },
+    {
+      "name": "sch_generate",
+      "description": "Generate a .kicad_sch from a declarative netlist spec. The spec lists components (with LCSC C-numbers and footprints) and named nets connecting their pins. The generated schematic passes basic ERC and is ready to open in KiCad for human review and PCB layout.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "netlist_spec": {
+            "type": "object",
+            "description": "Components + nets. See plugin docs for the schema.",
+            "properties": {
+              "components": {
+                "type": "array"
+              },
+              "nets": {
+                "type": "array"
+              }
+            },
+            "required": [
+              "components"
+            ]
+          },
+          "sch_path": {
+            "type": "string",
+            "description": "Optional override for the output path. Defaults to the active project's .kicad_sch."
+          },
+          "name": {
+            "type": "string",
+            "description": "Title block name. Defaults to the active project's name."
+          }
+        },
+        "required": [
+          "netlist_spec"
+        ]
+      }
+    },
+    {
+      "name": "pcb_generate",
+      "description": "Generate a fully-wired .kicad_pcb from a declarative spec using KiCad's pcbnew Python API. Each component in the spec needs an LCSC C-number \u2014 the plugin auto-fetches pin maps from EasyEDA so your nets can reference pin NAMES (like 'GPIO10' or 'VCC') instead of numbers. First run may pause ~12 seconds per unique IC for EasyEDA's rate limit; results are cached in SQLite so subsequent runs are instant. The tool then auto-places footprints in three bands (connectors on top, ICs in middle, passives below), wires every net pad-to-pad, and draws a board outline. Result: a .kicad_pcb ready to open in KiCad or EasyEDA for routing. REQUIRES KiCad 8+ installed (pcbnew is KiCad-side Python).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spec": {
+            "type": "object",
+            "description": "PCB spec with board/components/nets. See plugin docs for the full schema.",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "board": {
+                "type": "object"
+              },
+              "components": {
+                "type": "array"
+              },
+              "nets": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "components",
+              "nets"
+            ]
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Optional output .kicad_pcb path. Defaults to the active project's .kicad_pcb."
+          },
+          "auto_fetch_pinmaps": {
+            "type": "boolean",
+            "default": true,
+            "description": "Fetch pin-name to pad-number maps from EasyEDA for components that have an 'lcsc' field and no explicit 'pinmap'. Set false to work offline \u2014 nets must then reference bare pad numbers."
+          },
+          "force_refresh": {
+            "type": "boolean",
+            "default": false,
+            "description": "Bypass cached pin maps and refetch from EasyEDA. Slow (rate-limited to one request per 12s); use only when a cached map is known to be wrong."
+          },
+          "lib_dir": {
+            "type": "string",
+            "description": "Directory holding KiCad's stock .pretty footprint libraries. Normally omit it \u2014 the plugin finds KiCad's libraries on Linux, macOS, Windows and Flatpak, and honours KJLC_FOOTPRINT_DIR / KICAD*_FOOTPRINT_DIR."
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      }
+    },
+    {
+      "name": "part_pin_map",
+      "description": "Fetch the pin-name \u2192 pad-number map for an LCSC C-number from EasyEDA's component endpoint. Used internally by pcb_generate; exposed as a standalone tool so Claude can inspect a part's pinout before constructing a nets spec. Rate-limited (~12s between unique fetches); cached indefinitely in SQLite after first fetch.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lcsc": {
+            "type": "string",
+            "description": "LCSC C-number, e.g. 'C82942' for ME6211C33M5G-N LDO."
+          },
+          "force_refresh": {
+            "type": "boolean",
+            "default": false,
+            "description": "Bypass cache and re-fetch from EasyEDA."
+          }
+        },
+        "required": [
+          "lcsc"
+        ]
+      }
+    },
+    {
+      "name": "easyeda_handoff",
+      "description": "Produce the final handoff message for the user: the path to the generated .kicad_pcb and step-by-step instructions for importing it into easyeda.com for routing and ordering. This is the recommended terminal tool of the plugin \u2014 EasyEDA handles the final routing + JLCPCB ordering step far more reliably than any headless auto-router we could ship.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pcb_path": {
+            "type": "string",
+            "description": "Optional .kicad_pcb path. Defaults to the active project's board file."
+          }
+        }
+      }
+    },
+    {
+      "name": "package_for_jlcpcb",
+      "description": "Run all kicad-cli manufacturing exports on the active project's .kicad_pcb (gerbers, drill, position, BOM), rename gerbers to Protel extensions, drill to .XLN, and zip everything into a JLCPCB-ready manufacturing/jlcpcb-<name>-<date>.zip. Requires that placement and routing are already done in KiCad \u2014 this is the terminal tool in the workflow.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pcb_path": {
+            "type": "string",
+            "description": "Optional .kicad_pcb path. Defaults to the active project's .kicad_pcb."
+          },
+          "output_zip": {
+            "type": "string",
+            "description": "Optional output zip path. Defaults to <project>/manufacturing/jlcpcb-<name>-<date>.zip."
+          }
+        }
+      }
+    },
+    {
+      "name": "sch_run_erc",
+      "description": "Run KiCad's Electrical Rules Check (ERC) on a schematic via kicad-cli. Returns counts of errors and warnings plus a path to the full report. Errors > 0 means the schematic has structural problems that should be fixed before layout.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sch_path": {
+            "type": "string",
+            "description": "Optional schematic path. Defaults to the active project's .kicad_sch."
+          }
+        }
+      }
+    },
+    {
+      "name": "session_confirm_bom",
+      "description": "Record that the user has reviewed and approved the BOM. Call this immediately after they confirm at the BOM checkpoint, before pcb_generate. Without it the approval lives only in the conversation: if Claude Code restarts, session_resume reports the BOM as merely 'sourced' and the user is asked to approve the same BOM again. Spending money on a board is the one decision in this workflow worth making durable.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_path": {
+            "type": "string",
+            "description": "Defaults to the active project."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Optional note about what the user approved or asked to change, carried into the resume summary."
+          }
+        }
+      }
+    },
+    {
+      "name": "session_resume",
+      "description": "Inspect the .kicad_jlcpcb_session.json in a project directory to see where a prior workflow left off. Returns the current stage (created / parts_sourced / bom_confirmed / pcb_generated / handoff_rendered), which checkpoints are complete, and a recommended next step. Use at the start of /pcb-new or /pcb-from-bom on an existing project to offer the user a resume-or-restart choice.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_path": {
+            "type": "string",
+            "description": "Project directory or .kicad_pro path. Defaults to the active project when set."
+          }
+        }
+      }
+    },
+    {
+      "name": "lcsc_resolve_bom",
+      "description": "Resolve a list of BOM rows to concrete LCSC parts. Each row may specify an LCSC C-number directly or a free-text query with an optional package. Hard-prefers basic-tier parts; for any row that resolves to an extended part, attaches a cost-impact warning and tallies the JLCPCB assembly setup fee.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "lcsc": {
+                  "type": "string",
+                  "description": "LCSC C-number, e.g. 'C25804'."
+                },
+                "query": {
+                  "type": "string",
+                  "description": "Free-text spec used when no LCSC C-number is given."
+                },
+                "package": {
+                  "type": "string",
+                  "description": "Optional package filter for query rows."
+                },
+                "qty": {
+                  "type": "integer",
+                  "description": "Quantity per board (passed through, not used for matching)."
+                }
+              }
+            },
+            "description": "BOM rows. Each row needs either 'lcsc' or 'query'."
+          }
+        },
+        "required": [
+          "rows"
+        ]
+      }
+    }
+  ]
+}

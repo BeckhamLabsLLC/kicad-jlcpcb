@@ -1,6 +1,6 @@
 {
   "name": "kicad-jlcpcb",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Generate JLCPCB-ready KiCad PCB projects from descriptions, BOMs, or existing projects. Sources LCSC parts (basic-tier preferred), generates schematics, and packages routed boards into Gerber/drill/CPL/BOM zips ready to upload to JLCPCB.",
   "author": {
     "name": "BeckhamLabs",

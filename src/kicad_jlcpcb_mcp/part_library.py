@@ -19,7 +19,7 @@ change recovers if it ever moves.
 This module deliberately produces *correct enough* KiCad files rather
 than perfect ones. KiCad will open them, the user can review/edit, and
 the schematic + footprint will route through ERC and DRC. Anything more
-ambitious (full pin metadata fidelity, parametric footprints) is Phase 2.
+ambitious (full pin metadata fidelity, parametric footprints) is not.
 """
 
 from __future__ import annotations

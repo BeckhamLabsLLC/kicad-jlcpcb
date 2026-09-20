@@ -56,7 +56,7 @@ class Project:
     `root` is the project directory. The four file paths are derived from
     `<root>/<name>.kicad_*` and may not exist yet (in particular .kicad_pcb
     won't exist until the user opens the schematic in KiCad and creates a
-    board, or until Phase 2 generates one).
+    board, or until pcb_generate creates one).
     """
 
     name: str
@@ -181,7 +181,7 @@ def create_project(parent_dir: str | Path, name: str) -> Project:
     Raises ProjectError if the directory already exists or the name is
     invalid. The .kicad_pcb is intentionally NOT created — KiCad creates
     it the first time the user opens the schematic and creates a board,
-    and Phase 2 will generate one programmatically.
+    and pcb_generate creates one programmatically.
     """
     _validate_name(name)
     parent = Path(parent_dir).expanduser().resolve()

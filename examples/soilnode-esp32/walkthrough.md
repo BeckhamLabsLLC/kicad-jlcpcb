@@ -110,14 +110,25 @@ Claude builds the dict shown in `spec.json`. Notice:
 
 Claude calls `pcb_generate` with the spec. On first run:
 
-- EasyEDA pin-map fetch, ~12 s each, for the three parts whose nets use pin
-  names: `U1` (ESP32-C3), `U2` (the LDO) and `J1` (USB-C)
+- EasyEDA pin-map fetch, ~12 s each, for the two parts whose nets use pin
+  names and have no pin map in the spec: `U1` (ESP32-C3) and `J1` (USB-C)
+- `U2` (the LDO) also uses pin names, but `spec.json` hardcodes its pin map, so
+  it is skipped — see the note below on why that one is hardcoded
 - The other ten parts — resistors, caps, LED, JST-PH headers — are wired by
   pad number, so no lookup happens at all
 - pcbnew footprint load + placement + net creation: ~5 s
 
-That is 3 fetches for a 13-part board rather than 13. Cached after the first
+That is 2 fetches for a 13-part board rather than 13. Cached after the first
 run, so a second `pcb_generate` on the same parts is immediate.
+
+> **Why `U2`'s pin map is hardcoded.** `/pcb-new` tells you not to hardcode pin
+> maps, and that is right almost always. `U2` is the exception the rule needs:
+> EasyEDA numbers the SOT-223 tab pad **4**, while the KiCad footprint this spec
+> uses — `SOT-223-3_TabPin2` — numbers it **2**. An auto-fetched map would
+> resolve `GND` to a pad the footprint does not have, and `pcb_generate` would
+> stop and tell you so rather than mis-wire the regulator. Hardcoding the map is
+> the documented way out whenever EasyEDA's footprint and yours disagree on pad
+> numbering.
 
 Output:
 
@@ -125,7 +136,7 @@ Output:
 {
   "pcb_path": "/home/alex/pcbs/soilnode/soilnode.kicad_pcb",
   "footprints_placed": 13,
-  "nets_created": 10,
+  "nets_created": 9,
   "errors": [],
   "warnings": [],
   "net_stats": {
@@ -146,7 +157,7 @@ Claude calls `easyeda_handoff`:
 
 ```
 Your board file is at /home/alex/pcbs/soilnode/soilnode.kicad_pcb (48 KB).
-Size: 13 components, 10 nets, 80x60 mm, 2-layer.
+Size: 13 components, 9 nets, 80x60 mm, 2-layer.
 
 Next steps:
   1. Open https://easyeda.com/editor in your browser.

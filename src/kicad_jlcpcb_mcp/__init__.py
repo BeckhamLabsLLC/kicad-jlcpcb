@@ -6,7 +6,7 @@ JLCPCB basic-tier parts, generates schematics, and packages routed boards
 into manufacturing zips ready to upload to JLCPCB.
 """
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 
 
 USAGE = """kicad-jlcpcb {version} — MCP server for KiCad + JLCPCB workflows
@@ -20,8 +20,8 @@ running it by hand will appear to hang — that is correct behaviour.
 
 Normal use is through Claude Code, which launches it via .mcp.json:
 
-  /plugin marketplace add /abs/path/to/kicad-jlcpcb
-  /plugin install kicad-jlcpcb@beckhamlabs
+  /plugin marketplace add BeckhamLabsLLC/claude-plugins
+  /plugin install kicad-jlcpcb@beckhamlabs-plugins
 
 Docs and issues: https://github.com/BeckhamLabsLLC/kicad-jlcpcb
 """
@@ -70,8 +70,9 @@ def _preflight() -> None:
         sys.stderr.write(
             "kicad-jlcpcb failed to start: missing Python dependencies "
             f"({', '.join(missing)}).\n"
-            "Install with:  pip install -e .  (run from the plugin directory)\n"
-            "See CONTRIBUTING.md for the full dev setup.\n"
+            f"Install them with:  {sys.executable} -m pip install {' '.join(missing)}\n"
+            "Or install uv and let the plugin resolve them itself:\n"
+            "  curl -LsSf https://astral.sh/uv/install.sh | sh\n"
         )
         sys.exit(2)
 
