@@ -59,7 +59,7 @@ Three recurring friction points in small-batch PCB work, automated:
 | Component | Version | Notes |
 |---|---|---|
 | Python | 3.10 – 3.13 | Tested on all four in CI |
-| KiCad | 8.0 – 10.x | `kicad-cli` on `PATH`, `pcbnew` Python bindings for `pcb_generate`. KiCad 11 removed the SWIG bindings — see [TROUBLESHOOTING](TROUBLESHOOTING.md) |
+| KiCad | 8.0 – 10.x | `kicad-cli` on `PATH` or in a standard install location; `pcbnew` Python bindings for `pcb_generate`. Only the 8.0 floor is enforced — KiCad 11 removed the SWIG bindings and will pass detection, then fail at `pcb_generate`. See [TROUBLESHOOTING](TROUBLESHOOTING.md) |
 | EasyEDA account | free | Only needed for the final routing + ordering step |
 | Network | required | Part data is fetched live — see below |
 
@@ -94,79 +94,73 @@ Install KiCad:
 
 ## Install
 
-Distributed via GitHub only — no PyPI, no marketplace. Clone and install locally.
+```
+/plugin marketplace add BeckhamLabsLLC/claude-plugins
+/plugin install kicad-jlcpcb@beckhamlabs-plugins
+```
 
-### 1. Clone + install dependencies
+Restart Claude Code, then run `/mcp` and look for `kicad-jlcpcb`.
+
+That is the whole install. You do not need to clone the repo, and you do not
+need to install anything with `pip` — the plugin resolves its own two
+dependencies (`mcp`, `httpx`) on first launch via [uv](https://docs.astral.sh/uv/),
+which most Python toolchains already have:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh    # if you do not have it
+```
+
+If you would rather not use uv, install the dependencies into whichever Python
+`python3` resolves to and the plugin will use them directly:
+
+```bash
+python3 -m pip install mcp httpx
+```
+
+KiCad itself is a separate install — see [Requirements](#requirements).
+
+<details>
+<summary>Installing from a clone instead (contributors)</summary>
 
 ```bash
 git clone https://github.com/BeckhamLabsLLC/kicad-jlcpcb.git
 cd kicad-jlcpcb
-pip install -e .
-```
-
-`.mcp.json` launches the server as `python3 -m kicad_jlcpcb_mcp` with
-`PYTHONPATH` pointed at this checkout, so the plugin itself does not need to be
-on your `PATH`. The install above is only there to pull in its two
-dependencies (`mcp`, `httpx`).
-
-<details>
-<summary>Prefer an isolated virtualenv?</summary>
-
-```bash
-python -m venv .venv
-source .venv/bin/activate     # Windows: .\.venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-Then point `.mcp.json` at that interpreter so Claude Code finds the
-dependencies regardless of which shell it was launched from:
-
-```json
-{
-  "mcpServers": {
-    "kicad-jlcpcb": {
-      "command": "/abs/path/to/kicad-jlcpcb/.venv/bin/python",
-      "args": ["-m", "kicad_jlcpcb_mcp"],
-      "env": { "PYTHONPATH": "/abs/path/to/kicad-jlcpcb/src" }
-    }
-  }
-}
-```
-
-With `uv`, no install step is needed at all:
-
-```json
-{
-  "mcpServers": {
-    "kicad-jlcpcb": {
-      "command": "uv",
-      "args": ["run", "--directory", "${CLAUDE_PLUGIN_ROOT}", "kicad-jlcpcb"]
-    }
-  }
-}
-```
-
-</details>
-
-### 2. Register with Claude Code
+Then register the clone as a local marketplace, which is what makes Claude Code
+expand `${CLAUDE_PLUGIN_ROOT}` for the MCP server:
 
 ```
 /plugin marketplace add /abs/path/to/kicad-jlcpcb
 /plugin install kicad-jlcpcb@beckhamlabs
 ```
 
-Restart Claude Code so the MCP server registers.
+Note the marketplace name differs from the published one: the repo's own
+`.claude-plugin/marketplace.json` declares `beckhamlabs`, while the aggregator
+repo declares `beckhamlabs-plugins`.
 
-### 3. Sanity check
+Do **not** register the checkout by enabling its `.mcp.json` as a project
+server. `${CLAUDE_PLUGIN_ROOT}` is only substituted for plugin-provided MCP
+configs; in project scope it stays a literal string and the server cannot be
+found. See [TROUBLESHOOTING](TROUBLESHOOTING.md).
+
+</details>
+
+### Sanity check
 
 ```bash
-python3 -m kicad_jlcpcb_mcp --version    # prints the version, exits 0
+python3 bin/launch.py --version    # prints the version, exits 0
 ```
 
-Run it with no arguments and it will appear to hang — that is correct. An MCP
-server speaks JSON-RPC on stdio and is waiting for a client.
+Run the launcher with no arguments and it will appear to hang — that is
+correct. An MCP server speaks JSON-RPC on stdio and is waiting for a client.
+To check the whole path end to end, including that the server registers its
+handlers and answers a real tool call:
 
-To confirm Claude Code sees it, run `/mcp` and look for `kicad-jlcpcb`.
+```bash
+python3 scripts/check_protocol.py
+```
 
 ---
 
@@ -203,7 +197,7 @@ Set expectations honestly before you start:
 - ❌ **Auto-route traces.** That's why the `.kicad_pcb` gets handed to EasyEDA. Freerouting 2.1.0's CLI is buggy and can't handle RF matching networks; nothing else works headlessly well enough to ship.
 - ❌ **Beautiful placement.** The three-band grid (connectors on top, ICs in the middle, passives below) is functional, not pretty. You rearrange in EasyEDA before routing.
 - ❌ **Design review.** There's no DRC integration (yet — see Roadmap). The plugin trusts your spec and relies on KiCad / EasyEDA to catch rule violations.
-- ❌ **PyPI distribution.** Install from the clone. No `pip install kicad-jlcpcb`.
+- ❌ **PyPI distribution.** Install through the Claude Code marketplace. There is no `pip install kicad-jlcpcb`.
 
 ---
 
@@ -269,15 +263,15 @@ Full worked spec: **[`examples/soilnode-esp32/spec.json`](examples/soilnode-esp3
 
 ```
 src/kicad_jlcpcb_mcp/
-  server.py         ← MCP server + 13 tool definitions
+  server.py         ← MCP server + 14 tool definitions
   session.py        ← per-project state (.kicad_jlcpcb_session.json)
   project.py        ← .kicad_pro create / load / validate
-  kicad_cli.py      ← async wrapper for kicad-cli (KiCad 8/9)
+  kicad_cli.py      ← async wrapper for kicad-cli (KiCad 8–10)
   lcsc_client.py    ← jlcsearch + EasyEDA lookup, SQLite cache, basic-tier filter
   part_library.py   ← EasyEDA client (EasyEdaRateLimiter + pin-map cache)
   pcb.py            ← pcbnew-based .kicad_pcb generator
   schematic.py      ← netlist spec → .kicad_sch
-  gerber_pack.py    ← KiCad 8/9 Protel extension normalizer + JLCPCB zip
+  gerber_pack.py    ← Protel extension normalizer + JLCPCB zip
   sexpr.py          ← s-expression reader/writer
   config.py         ← module-level constants
 ```
@@ -327,7 +321,7 @@ Full guide: **[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)**. Most common issues:
 
 | Symptom | Fix |
 |---|---|
-| `kicad-jlcpcb` command not found | `pip install -e .` from the clone, restart Claude Code |
+| MCP server shows as failed / `CONNECTION_CLOSED` | Run `python3 bin/launch.py --version` by hand — it prints what is missing. Usually: install `uv`, or `python3 -m pip install mcp httpx`. |
 | `ImportError: No module named pcbnew` | Install KiCad; don't try to `pip install pcbnew` (it ships with KiCad) |
 | First run stalls ~12 s per part | Expected — EasyEDA rate limit, and only for parts whose nets use pin *names*. Cached forever after the first fetch. |
 | `Footprint not found` | The error names how many libraries were found and suggests near matches. If none were found, set `KJLC_FOOTPRINT_DIR`. |
@@ -368,7 +362,7 @@ So the plugin takes the pragmatic win: **it wires everything up, EasyEDA routes 
 ## Roadmap
 
 - **Next** — auto-placement that respects functional groupings (power domain, RF block, analog front-end), DRC integration, differential-pair awareness, and a per-package CPL rotation table so JLCPCB orientations need no manual correction.
-- **Phase 3** — vision-based schematic extraction: drop in a photo of a hand-drawn schematic, out comes a wired `.kicad_pcb`.
+- **Later** — vision-based schematic extraction: drop in a photo of a hand-drawn schematic, out comes a wired `.kicad_pcb`.
 
 ---
 

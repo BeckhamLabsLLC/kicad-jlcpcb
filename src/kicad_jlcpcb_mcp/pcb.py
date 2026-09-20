@@ -42,7 +42,7 @@ Edge.Cuts, and saves. Result: a `.kicad_pcb` the user can open in KiCad,
 rearrange to their liking, and then route (manually or with Freerouting
 from KiCad's menu).
 
-This module does NOT route traces. Routing is Phase 2 and is best done
+This module does NOT route traces. Routing is out of scope here and is best done
 interactively in KiCad where the user has visual feedback. This module's
 job is to eliminate the weeks of tedious wire-drawing from the workflow.
 """

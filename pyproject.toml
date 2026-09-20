@@ -62,7 +62,10 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
-    "ruff>=0.1.0",
+    # Pinned to the exact version lint.yml and .pre-commit-config.yaml use.
+    # An unpinned range meant a local `ruff format` could reformat files
+    # that CI then rejected, or vice versa.
+    "ruff==0.15.0",
 ]
 
 [project.scripts]

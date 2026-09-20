@@ -67,15 +67,22 @@ JLCPCB's web upload accepts a single zip file containing:
    - `<board>.GTP` — top paste (assembly only, optional for bare PCB)
    - `<board>.GBP` — bottom paste
    - `<board>.GM1` — board outline (mechanical layer 1)
-   - For 4-layer: `<board>.G2L`, `<board>.G3L` for inner layers
+   - Inner layers: `<board>.G1`, `<board>.G2`, … (`In1_Cu` → `.G1`). These
+     are what KiCad writes natively and what JLCPCB documents; the
+     Altium-style `.GL2`/`.GL3` spellings are *not* what this plugin emits.
 
-2. **Drill file** — single merged Excellon, named `<board>.XLN` (or `.TXT`)
+2. **Drill file** — a merged Excellon named `<board>.XLN` (or `.TXT`).
+   When KiCad only produced a split PTH/NPTH pair, both files ship, plated
+   first, with a warning saying so. JLCPCB accepts that — it is not a defect.
 
 3. **Optional for assembly:**
    - **CPL** — pick-and-place CSV with reference, value, package, X, Y, rotation, side
    - **BOM** — comma-separated reference, value, **LCSC C-number** (critical), description
 
-The plugin's `gerber_pack.pack_for_jlcpcb` produces all of this in the right naming scheme. The KiCad export commands inside `kicad_cli.py` use the right flags (`--no-x2`, merged drill, both sides for CPL).
+The plugin's `gerber_pack.pack_for_jlcpcb` produces all of this in the right
+naming scheme. The KiCad export commands inside `kicad_cli.py` use the right
+flags: `--no-x2`, `--subtract-soldermask`, both sides for CPL, and absolute
+drill origin so the drill and gerber coordinate systems agree.
 
 ## Common rejection reasons from JLCPCB review
 

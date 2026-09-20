@@ -12,8 +12,8 @@ Tool surface (14 tools across 6 stages):
 `tests/test_server.py::TestAllPhase1ToolsListed` pins this list against the
 handler routing, so definitions and routing cannot drift apart silently.
 
-Phase 2 will add auto-placement, Freerouting integration, and DRC.
-Phase 3 will add vision-based schematic extraction and EasyEDA backup export.
+Routing is deliberately out of scope; see easyeda_handoff.
+Vision-based schematic extraction is a possible future addition.
 """
 
 import asyncio

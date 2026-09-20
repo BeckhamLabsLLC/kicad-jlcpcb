@@ -80,7 +80,11 @@ class TestPreflight:
         assert exc.value.code == 2
         err = capsys.readouterr().err
         assert "httpx" in err
-        assert "pip install -e ." in err
+        # The message has to carry a command the user can run. It used to say
+        # `pip install -e .` "from the plugin directory", which for a
+        # marketplace install is a cache directory they have never seen.
+        assert "pip install httpx" in err
+        assert "uv" in err
 
 
 class TestAsASubprocess:

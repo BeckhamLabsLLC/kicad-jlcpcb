@@ -6,7 +6,9 @@ Quick-reference for failure modes the skill is likely to encounter. For the full
 
 - `detect_kicad` returns `meets_min: false` → relay the `install_hint` field to the user verbatim; do not try to install KiCad yourself.
 - `detect_kicad` returns `found: false` → KiCad isn't on PATH; same — relay the install hint.
-- MCP server won't start at all → user needs `pip install -e .` from the plugin directory.
+- MCP server won't start at all → have the user run `python3 bin/launch.py --version`
+  from the plugin directory; it prints what is missing. Usually the fix is to
+  install `uv`, or `python3 -m pip install mcp httpx`.
 
 ## Part sourcing
 
@@ -22,7 +24,11 @@ Quick-reference for failure modes the skill is likely to encounter. For the full
 
 ## `pcb_generate`
 
-- `Footprint not found: Library:Footprint` → grep `/usr/share/kicad/footprints/` for a close match and fix the spec.
+- `Footprint not found: Library:Footprint` → the error names how many libraries
+  were found and suggests near matches; fix the spec to one of those. If no
+  libraries were found at all, the footprint directory was not located —
+  set `KJLC_FOOTPRINT_DIR`. (The path differs per platform; do not assume
+  `/usr/share/kicad/footprints/`.)
 - A net has fewer than 2 pads → one terminal is dangling; inspect the `nets` dict for typos.
 - `result.errors` is non-empty → each error names the offending ref and pin; fix the spec and retry (pin maps are cached so retry is cheap).
 

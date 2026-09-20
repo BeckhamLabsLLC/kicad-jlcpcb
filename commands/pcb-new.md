@@ -49,6 +49,11 @@ Take a text description of a PCB and deliver a ready-to-import KiCad board file 
 
 ## Instructions
 
+> **`pcb_generate` overwrites the project's `.kicad_pcb`.** It rebuilds the
+> board from scratch and saves over the existing file — no merge, no backup. If
+> the project already has a board the user may have opened in KiCad, say so and
+> confirm before re-running.
+
 ### 1. Detect KiCad
 
 Call `detect_kicad`. If `meets_min` is false, stop and pass the `install_hint` to the user. KiCad's `pcbnew` Python module is required by `pcb_generate`.
@@ -149,7 +154,7 @@ If there are genuine errors, fix the spec and re-run.
 
 Call `sch_generate` with a netlist spec derived from the same components and nets, then `sch_run_erc`.
 
-The schematic is not required for the board — `pcb_generate` already produced it — but it gives the user something to open and check, and ERC catches connectivity mistakes the PCB stage cannot. Expect `lib_symbol_issues` warnings: the symbols are embedded in the file rather than installed as a library, which is normal and harmless.
+The schematic is not required for the board — `pcb_generate` already produced it — but it gives the user something to open and check, and ERC catches connectivity mistakes the PCB stage cannot. Expect warnings about symbols not being installed as a library — they are embedded in the file instead, which is normal and harmless.
 
 Report the ERC result honestly. An unconnected pin is a real finding worth surfacing, not noise to skip past.
 
@@ -163,6 +168,7 @@ Call `easyeda_handoff`. Relay the response verbatim to the user — specifically
 
 - The path to the generated `.kicad_pcb`
 - The step-by-step EasyEDA import instructions
+- The `before_you_order` checklist — do not summarise or drop this one, it is the last thing the user reads before spending money
 - The `why_easyeda` explanation
 - The `alternative` KiCad-based flow if they'd rather not use EasyEDA
 

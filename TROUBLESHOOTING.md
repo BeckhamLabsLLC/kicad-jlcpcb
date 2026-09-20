@@ -6,15 +6,45 @@ Common failure modes and how to resolve them. If your issue isn't here, please [
 
 ## Install & startup
 
-### `kicad-jlcpcb` command not found
+### MCP server shows as failed, or `CONNECTION_CLOSED`
 
-You installed the plugin but the MCP server won't start, or Claude Code reports the MCP server is missing.
+Claude Code only tells you the connection closed; it does not show you why. Run
+the launcher by hand and it will:
 
-**Fix:** `pip install -e .` from the plugin directory. This installs the `kicad-jlcpcb` entry-point script onto your `PATH`. If you used a virtualenv, the `.venv/bin/kicad-jlcpcb` is what `.mcp.json` needs to find — either activate the venv before launching Claude Code or edit `.mcp.json` to point `"command"` at `/abs/path/to/.venv/bin/kicad-jlcpcb`.
+```bash
+python3 bin/launch.py --version
+```
+
+If that prints a version, the server is fine and the problem is registration —
+see *"`${CLAUDE_PLUGIN_ROOT}` appears literally"* below.
 
 ### `kicad-jlcpcb failed to start: missing Python dependencies (mcp, httpx)`
 
-The preflight check fired. `pip install -e .` from the plugin directory, in the same Python environment that `which python3` resolves to.
+The plugin resolves its own dependencies through `uv` when `uv` is on `PATH`.
+This message means neither the dependencies nor `uv` were available. Either:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh     # preferred
+python3 -m pip install mcp httpx                    # or install them directly
+```
+
+Then restart Claude Code. If you installed with `pip`, it must be the same
+Python environment that `which python3` resolves to.
+
+### `${CLAUDE_PLUGIN_ROOT}` appears literally, or `No module named kicad_jlcpcb_mcp`
+
+`${CLAUDE_PLUGIN_ROOT}` is only substituted for MCP servers that Claude Code
+loads *from a plugin*. If you registered a checkout by enabling its `.mcp.json`
+as a **project** server, the variable stays a literal string and nothing
+resolves.
+
+**Fix:** register the checkout as a local marketplace instead, which is what
+makes it a plugin:
+
+```
+/plugin marketplace add /abs/path/to/kicad-jlcpcb
+/plugin install kicad-jlcpcb@beckhamlabs
+```
 
 ### `ImportError: No module named pcbnew`
 
@@ -23,7 +53,9 @@ KiCad's `pcbnew` is shipped as part of KiCad itself, not pip. If `pcb_generate` 
 - **Fedora:** `sudo dnf install kicad` (the main package includes the Python bindings).
 - **Ubuntu:** `sudo apt install kicad python3-pcbnew` (the bindings may be a separate package).
 - **macOS:** Install KiCad from the official installer. KiCad.app embeds a Python, so you may need to run Claude Code under that same interpreter.
-- **KiCad 11+ removed SWIG bindings.** Stay on KiCad 9 or 10 until the plugin is updated to the new API.
+- **KiCad 11+ removed SWIG bindings.** The plugin enforces a floor of 8.0 and
+  no ceiling, so KiCad 11 passes `detect_kicad` and then fails at
+  `pcb_generate`. Stay on KiCad 8, 9 or 10 until the plugin is ported.
 
 ---
 
@@ -90,7 +122,9 @@ Delete the cache to force a refetch:
 rm ~/.cache/kicad-jlcpcb/lcsc_parts.sqlite
 ```
 
-Or pass `force_refresh: true` to `lcsc_search` / `lcsc_resolve_bom`.
+`lcsc_search` and `lcsc_resolve_bom` have no `force_refresh` argument —
+deleting the cache file above is the way to force a re-fetch. (`part_pin_map`
+and `pcb_generate` *do* take `force_refresh`, for the EasyEDA pin-map cache.)
 
 ### `lcsc_resolve_bom` says a C-number is not found
 
@@ -122,9 +156,12 @@ This is the rate-limit throttle (EasyEDA serves ~1 request per 12 s per IP befor
 
 Reduce the delay for testing only:
 
+There is no environment variable for this — the delay is a module constant,
+and the test suite lowers it by monkeypatching (see `tests/conftest.py`):
+
 ```python
-# NOT for production — violates EasyEDA's anti-bot
-export KJLC_TEST_FAST=1  # not currently honored; edit part_library.EASYEDA_MIN_DELAY_SECONDS
+# NOT for production — the delay exists to respect EasyEDA's rate limit
+monkeypatch.setattr(part_library, "EASYEDA_MIN_DELAY_SECONDS", 0.0)
 ```
 
 ### `EasyEDA has no component data for CXXXXXX`
@@ -217,7 +254,12 @@ The session file was never created (the project was made outside this plugin) or
 
 ### "No PCB file" error
 
-Most users do not need this legacy tool — the EasyEDA handoff flow is preferred. If you do want the zip path, first route your board in KiCad or open it in EasyEDA and export, then re-run.
+There is no `.kicad_pcb` at the path given. Run `pcb_generate` first — that
+is what creates it. Failing that, open the project in KiCad, create and save
+a board, then re-run.
+
+Most users do not need this tool at all: the EasyEDA handoff flow routes and
+orders in one place. `package_for_jlcpcb` is for the zip-upload path.
 
 ### JLCPCB web upload rejects the zip
 
@@ -225,7 +267,12 @@ Most common causes:
 
 - **Missing Edge.Cuts layer.** KiCad won't export an Edge.Cuts Gerber if your board has no outline. Draw a rectangle on the Edge.Cuts layer first.
 - **Non-X2 Gerber format.** KiCad 8/9 default to X2, which JLCPCB accepts. Check your project settings if you explicitly changed formats.
-- **Unmerged drill files.** The plugin prefers the merged `.drl`. If you see split PTH/NPTH files in the zip, KiCad was configured for separate files — change in `File → Plot → Drill` preferences.
+- **Wrong layer count selected on the JLCPCB order form.** The zip contents
+  decide the layer count; make sure the web form agrees with it.
+
+Split PTH/NPTH drill files are *not* a rejection cause. When KiCad only
+produced a split pair the plugin ships both, plated first, and says so in its
+warnings. JLCPCB accepts that.
 
 ---
 
@@ -246,8 +293,9 @@ python -c "import importlib.metadata as m; print(m.version('mcp'))"   # expect 1
 ### `ENOENT: Executable not found in $PATH: kicad-jlcpcb`
 
 You are on an old `.mcp.json` that invoked a bare `kicad-jlcpcb` command.
-Pull the latest — it now launches `python3 -m kicad_jlcpcb_mcp` with
-`PYTHONPATH` set to the plugin root, so nothing needs to be on `PATH`.
+Pull the latest — it now launches `python3 ${CLAUDE_PLUGIN_ROOT}/bin/launch.py`,
+which locates the package relative to itself, so nothing needs to be on `PATH`
+and no `PYTHONPATH` is involved.
 
 ---
 
@@ -256,8 +304,8 @@ Pull the latest — it now launches `python3 -m kicad_jlcpcb_mcp` with
 It is fetching EasyEDA pin maps, which are rate-limited to one request per
 12 seconds. Only parts whose nets reference pins by *name* need one —
 anything wired by pad number is skipped, so a board of mostly passives
-finishes far quicker than its part count suggests. The shipped example
-needs 3 fetches for 13 parts.
+finishes far quicker than its part count suggests. The shipped example needs
+2 fetches for 13 parts.
 
 Results are cached indefinitely, so the second run on the same parts is
 instant. To avoid the wait entirely, pass `auto_fetch_pinmaps: false` and

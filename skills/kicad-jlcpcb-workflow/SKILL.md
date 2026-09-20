@@ -148,9 +148,6 @@ The EasyEDA pin-name extraction is accurate but uses datasheet nomenclature, whi
   - `"net X: Y has no pad Z"` — pin name doesn't match EasyEDA's data, call `part_pin_map` and fix
 - **EasyEDA rate-limited warning in logs** — first run of `pcb_generate` pauses ~12 seconds per part whose nets reference pins by *name*. Parts wired by pad number are skipped entirely, so a board of mostly passives is far quicker than the part count suggests. Subsequent runs are instant.
 
-## Reference docs
-
-- `references/jlcpcb-rules.md` — JLCPCB design rules, cost model, manufacturing file requirements
 ## Before telling the user the board is ready
 
 Two checks, both of which the tools report and neither of which is optional:
@@ -165,6 +162,22 @@ Two checks, both of which the tools report and neither of which is optional:
    EasyEDA-derived footprints are already in JLCPCB's convention;
    KiCad-stdlib ones may not be.
 
+And relay `easyeda_handoff`'s `before_you_order` verbatim. It is the last thing
+the user reads before spending money.
+
+## `pcb_generate` overwrites the board file
+
+`pcb_generate` builds the board from scratch every time and saves over the
+project's `.kicad_pcb` without asking. There is no merge and no backup.
+
+So if the user may have opened the project in KiCad and placed, routed or
+edited anything by hand, **say so before re-running it** and let them decide.
+Re-running after only a spec change is fine; re-running after manual work
+silently discards that work.
+
+## Reference docs
+
+- `references/jlcpcb-rules.md` — JLCPCB design rules, cost model, manufacturing file requirements
 - `references/lcsc-search.md` — Where part data comes from and how to write queries that find parts
 - `references/troubleshooting.md` — Quick reference for common runtime failure modes
 - Worked sample project: [`examples/soilnode-esp32/`](../../examples/soilnode-esp32/) in the repo root — full spec, BOM, and step-by-step walkthrough
