@@ -57,3 +57,10 @@ _autosave-*
 
 # Eval run artifacts (scores are reproducible; the HTML reports are large)
 evals/results/
+
+# uv writes this when the launcher bootstraps dependencies. Deliberately not
+# committed: the whole point of the uv path is to resolve within the bounds
+# pyproject declares, and a shipped lock would freeze every user on whatever
+# versions happened to be current here. The load-bearing constraint (mcp<2)
+# lives in pyproject.toml, which is where it belongs.
+uv.lock
