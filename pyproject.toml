@@ -77,6 +77,11 @@ packages = ["src/kicad_jlcpcb_mcp"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
+    # bin/launch.py is what .mcp.json runs; scripts/check_protocol.py is how
+    # you tell whether the server actually came up. Neither is importable
+    # from the package, so both have to be listed to survive an sdist.
+    "/bin",
+    "/scripts",
     "/README.md",
     "/LICENSE",
     "/CHANGELOG.md",

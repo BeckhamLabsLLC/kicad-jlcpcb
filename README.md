@@ -149,18 +149,20 @@ found. See [TROUBLESHOOTING](TROUBLESHOOTING.md).
 
 ### Sanity check
 
+`/mcp` in Claude Code should list `kicad-jlcpcb` with its 14 tools. If it
+reports the server failed, see [TROUBLESHOOTING](TROUBLESHOOTING.md) — the
+first step there prints the actual reason, which Claude Code does not show you.
+
+From a clone, you can also check the whole path end to end — that the server
+starts, registers its handlers, and answers a real tool call:
+
 ```bash
-python3 bin/launch.py --version    # prints the version, exits 0
+python3 bin/launch.py --version     # prints the version, exits 0
+python3 scripts/check_protocol.py   # initialize -> tools/list -> tools/call
 ```
 
 Run the launcher with no arguments and it will appear to hang — that is
 correct. An MCP server speaks JSON-RPC on stdio and is waiting for a client.
-To check the whole path end to end, including that the server registers its
-handlers and answers a real tool call:
-
-```bash
-python3 scripts/check_protocol.py
-```
 
 ---
 
