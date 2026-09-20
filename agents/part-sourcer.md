@@ -10,9 +10,15 @@ description: |
   <example>The /pcb-new command iterates through a list of generic specs and invokes one part-sourcer per spec in parallel.</example>
 model: haiku
 tools:
+  # Each MCP tool is listed twice on purpose. A server from a project
+  # .mcp.json is exposed as mcp__<server>__<tool>, but the same server
+  # provided by an installed plugin is mcp__plugin_<plugin>_<server>__<tool>.
+  # Listing only the short form meant this command ran with no MCP tools at
+  # all for anyone who installed from the marketplace, and answered in prose.
   - Read
   - Glob
   - mcp__kicad-jlcpcb__lcsc_search
+  - mcp__plugin_kicad-jlcpcb_kicad-jlcpcb__lcsc_search
 ---
 
 # Part Sourcer Agent
