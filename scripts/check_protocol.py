@@ -171,12 +171,27 @@ def check(verbose: bool = True) -> list[dict]:
 
 
 def main() -> int:
+    """--dump-tools writes the live tools/list result to the eval mocks.
+
+    The mocked tools have to carry the *real* descriptions and schemas:
+    a tool description is part of what steers the model, so a mock with a
+    placeholder schema measures something the plugin does not ship.
+    """
+    dump = "--dump-tools" in sys.argv[1:]
+
     print(f"Speaking MCP to {LAUNCHER.relative_to(PLUGIN_ROOT)} ...")
     try:
-        check()
+        tools = check()
     except ProtocolError as exc:
         print(f"\nFAIL: {exc}", file=sys.stderr)
         return 1
+
+    if dump:
+        target = PLUGIN_ROOT / "evals" / "mocks" / "kicad-jlcpcb" / "_tools.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"tools": tools}, indent=2) + "\n")
+        print(f"  wrote           -> {target.relative_to(PLUGIN_ROOT)} ({len(tools)} tools)")
+
     print("\nOK: the server answers initialize, tools/list and tools/call.")
     return 0
 

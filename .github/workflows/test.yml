@@ -44,6 +44,12 @@ jobs:
       - name: Run tests (non-KiCad suite)
         run: pytest tests/ --tb=short
 
+      # The unit suite runs against a mocked `Server`, so it cannot tell you
+      # whether the process Claude Code launches actually comes up and answers.
+      # This starts the real thing and speaks JSON-RPC to it.
+      - name: Protocol handshake against the real server
+        run: python scripts/check_protocol.py
+
       # Reported, not gated. A hard threshold on a suite whose two most
       # important layers (KiCad integration, live upstream) are gated behind
       # env vars would measure the wrong thing, and a number nobody looks at

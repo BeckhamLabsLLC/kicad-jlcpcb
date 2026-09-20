@@ -6,6 +6,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-19
+
+Two bugs in here made the plugin useless to anyone who installed it the way
+the README told them to, and the 447-test suite was green for both.
+
+### Fixed
+- **A marketplace install could not start the server.** `.mcp.json` ran
+  `python3 -m kicad_jlcpcb_mcp`, and nothing on that path ever installs `mcp`
+  and `httpx` — a marketplace install never clones the repo and never runs
+  `pip install`. The server exited at the preflight check and Claude Code
+  reported `CONNECTION_CLOSED`. It now launches `bin/launch.py`, which finds
+  `src/` relative to itself and re-execs through `uv run --directory` when the
+  dependencies are missing, so a fresh install resolves them on first launch.
+  When `uv` is absent too it prints two runnable commands instead of dying
+  quietly.
+- **`allowed-tools` blocked every MCP tool for installed plugins.** Both
+  commands and the `part-sourcer` agent granted `mcp__kicad-jlcpcb__<tool>`.
+  That is the name a server gets from a *project* `.mcp.json`; the same server
+  provided by an installed plugin is `mcp__plugin_<plugin>_<server>__<tool>`.
+  The allowlist therefore matched nothing, `/pcb-new` ran with Read, Write,
+  Glob, Grep and Task, and a "design me a board" request got an essay about
+  designing boards. Both forms are listed now.
+- `PYTHONPATH` in `.mcp.json` was `${CLAUDE_PLUGIN_ROOT}/src`, but that
+  variable is only substituted for plugin-provided MCP configs. Registering a
+  checkout as a project server left it a literal string and the server died
+  with `No module named kicad_jlcpcb_mcp`. The launcher no longer needs the
+  variable at all.
+- The `initialize` handshake reported `serverInfo.version` as the mcp SDK's
+  version. A client asking which kicad-jlcpcb it was talking to was told
+  `1.26.0`.
+
+### Added
+- **`evals/` — five cases measuring whether Claude reaches for the tools at
+  the right moment.** Every other test proves the tools work *when called*,
+  which is a different question and not the one that decides whether the
+  plugin is useful; a new model can change the answer without breaking a
+  single test. Each case asserts a claim the docs already make. The MCP
+  server is mocked from a real `tools/list` dump, so runs cost tokens but
+  reach no upstream API. See `evals/README.md`.
+- `scripts/check_protocol.py` starts the real server and holds a real
+  conversation with it — `initialize`, `tools/list`, `tools/call`. The unit
+  suite patches `mcp.server.Server`, so it structurally cannot see an
+  unregistered handler; this can, and it runs in CI.
+- A test asserting both handlers reach the SDK's `request_handlers` registry.
+  The previous test asserted `_server is not None`, which passes with every
+  decorator deleted. Verified by removing the `call_tool` registration: the
+  new checks fail and the other 452 tests stay green.
+- `tests/test_plugin_surface.py` covers the declarative surface — manifests,
+  commands, agent — which nothing tested before, and which is where both of
+  the above bugs lived.
+- A `plugin` CI job. `claude plugin validate .` only validates
+  `marketplace.json` when one is present, so the plugin manifest, skills,
+  commands and agents are now each named explicitly.
+- The weekly contract job opens an issue when it fails. It already requested
+  `issues: write` and never used it, so a failure showed up only as a red tick
+  nobody was watching — which is how issue #1 went unnoticed for four months.
+
+### Changed
+- **The install instructions were false.** The README said "Distributed via
+  GitHub only — no PyPI, no marketplace" and gave a local absolute path, in a
+  repo that ships `.claude-plugin/marketplace.json` and is listed in
+  `BeckhamLabsLLC/claude-plugins`. It is now the real two-line install,
+  walked through end to end against a clean config directory. The same stale
+  text was baked into the `--help` banner.
+- A claims audit over every doc. The ones that steered the model mattered
+  most: `references/jlcpcb-rules.md` still taught `.G2L`/`.G3L` for inner
+  layers, the transposition 0.9.0 fixed in `config.py`; TROUBLESHOOTING told
+  users to pass `force_refresh` to `lcsc_search` and `lcsc_resolve_bom`, which
+  neither declares; and `/pcb-new` told the model to expect a
+  `lib_symbol_issues` field that `sch_run_erc` does not return.
+- Documented that `pcb_generate` rebuilds the board from scratch and saves
+  over the project's `.kicad_pcb` with no merge and no backup. Nothing said
+  so, and a user who had hand-routed would lose it silently.
+- `/pcb-new` now relays `easyeda_handoff`'s `before_you_order`, which it never
+  did, though it is the last thing the user reads before spending money.
+- Settled the supported KiCad range on what the code enforces: a floor of 8.0
+  and no ceiling. Three different ranges were documented across three files.
+- The worked example said 10 nets where `spec.json` has 9, and 3 pin-map
+  fetches where the code does 2. It also never explained why `U2` hardcodes a
+  pin map — EasyEDA numbers the SOT-223 tab pad 4 and `SOT-223-3_TabPin2`
+  numbers it 2 — while `/pcb-new` tells the model never to hardcode one.
+- Pinned `ruff` in the dev extra to the version CI and pre-commit already use.
+
 ## [0.15.0] - 2026-09-16
 
 ### Fixed
@@ -504,7 +587,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.16.0
 [0.15.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.15.0
 [0.14.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.14.0
 [0.13.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.13.0

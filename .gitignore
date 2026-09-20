@@ -54,3 +54,6 @@ _autosave-*
 # Local Claude Code user settings (per-machine, not shared)
 .claude/
 
+
+# Eval run artifacts (scores are reproducible; the HTML reports are large)
+evals/results/
