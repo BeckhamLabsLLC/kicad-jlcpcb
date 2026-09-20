@@ -333,6 +333,33 @@ class TestServerActuallyConstructs:
         srv = KicadJlcpcbServer()
         assert srv._server is not None
 
+    def test_both_handlers_reach_the_sdk_registry(self):
+        """Assert registration against the SDK, not against our own attribute.
+
+        `srv._server is not None` passes even if every decorator were
+        deleted. The failure this guards against is a handler that is
+        *defined but never registered* — a refactor stranding
+        `self._server.call_tool()(call_tool)` after an early return, which
+        leaves the whole suite green while every tool call in production
+        answers "Method not found".
+
+        `request_handlers` is the dict the SDK actually dispatches on, so
+        checking it is the same question the client asks.
+        """
+        from mcp.types import CallToolRequest, ListToolsRequest
+
+        from kicad_jlcpcb_mcp.server import KicadJlcpcbServer
+
+        registry = KicadJlcpcbServer()._server.request_handlers
+
+        for request_type in (ListToolsRequest, CallToolRequest):
+            assert request_type in registry, (
+                f"{request_type.__name__} has no handler registered with the "
+                "MCP SDK. The server will start and then answer 'Method not "
+                "found' for every call. Check that _setup_handlers() still "
+                "reaches both registrations."
+            )
+
     def test_installed_mcp_exposes_the_low_level_api_we_build_on(self):
         from mcp.server import Server
 

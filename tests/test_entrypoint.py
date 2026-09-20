@@ -104,3 +104,90 @@ class TestAsASubprocess:
         r = self._run("--help")
         assert r.returncode == 0
         assert "JSON-RPC" in r.stdout
+
+
+class TestTheLauncherResolvesDependencies:
+    """`bin/launch.py` is what `.mcp.json` runs, and it runs before the
+    dependencies necessarily exist.
+
+    The failure it was written for: a marketplace install never clones and
+    never runs `pip install`, so `mcp` and `httpx` are absent and the server
+    exited at preflight — every new user, first command. These tests pin the
+    three routes it can take without actually installing anything.
+    """
+
+    @staticmethod
+    def _load_launcher():
+        """Import bin/launch.py by path; it is a script, not a package."""
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parent.parent / "bin" / "launch.py"
+        spec = importlib.util.spec_from_file_location("kjlc_launch", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_it_runs_the_server_when_dependencies_are_present(self, monkeypatch):
+        launcher = self._load_launcher()
+        monkeypatch.setattr(launcher, "_missing_dependencies", lambda: [])
+
+        called = []
+        monkeypatch.setattr(
+            "kicad_jlcpcb_mcp.main", lambda *a, **k: called.append(True), raising=False
+        )
+        launcher.main()
+        assert called == [True]
+
+    def test_it_reexecs_through_uv_when_dependencies_are_missing(self, monkeypatch):
+        launcher = self._load_launcher()
+        monkeypatch.setattr(launcher, "_missing_dependencies", lambda: ["mcp"])
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: "/usr/bin/uv")
+        monkeypatch.delenv("KJLC_LAUNCH_VIA_UV", raising=False)
+
+        argv = {}
+
+        def fake_execvp(file, args):
+            argv["file"] = file
+            argv["args"] = args
+            raise SystemExit(0)
+
+        monkeypatch.setattr(launcher.os, "execvp", fake_execvp)
+        with pytest.raises(SystemExit):
+            launcher.main()
+
+        assert argv["file"] == "uv"
+        assert argv["args"][:4] == ["uv", "run", "--directory", str(launcher.PLUGIN_ROOT)]
+        assert "kicad-jlcpcb" in argv["args"]
+
+    def test_it_does_not_loop_if_uv_also_lacks_the_dependencies(self, monkeypatch, capsys):
+        """uv's child re-enters this same script. Without the guard it would
+        exec uv again, forever, and Claude Code would just see a hang."""
+        launcher = self._load_launcher()
+        monkeypatch.setattr(launcher, "_missing_dependencies", lambda: ["mcp"])
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: "/usr/bin/uv")
+        monkeypatch.setenv("KJLC_LAUNCH_VIA_UV", "1")
+
+        def explode(*a, **k):
+            raise AssertionError("re-execed through uv a second time")
+
+        monkeypatch.setattr(launcher.os, "execvp", explode)
+        with pytest.raises(SystemExit) as exc:
+            launcher.main()
+        assert exc.value.code == 2
+
+    def test_the_no_uv_message_names_both_ways_out(self, monkeypatch, capsys):
+        launcher = self._load_launcher()
+        monkeypatch.setattr(launcher, "_missing_dependencies", lambda: ["mcp", "httpx"])
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: None)
+
+        with pytest.raises(SystemExit) as exc:
+            launcher.main()
+        assert exc.value.code == 2
+
+        message = capsys.readouterr().err
+        assert "mcp, httpx" in message
+        # A stdio server's stderr is the only thing the user will ever see,
+        # so it has to carry a runnable command, not just a diagnosis.
+        assert "uv" in message
+        assert "pip install mcp httpx" in message

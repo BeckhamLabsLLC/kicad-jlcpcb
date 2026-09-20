@@ -35,7 +35,10 @@ class KicadJlcpcbServer:
     """MCP Server for KiCad → JLCPCB workflows."""
 
     def __init__(self):
-        self._server = Server("kicad-jlcpcb")
+        # The version is passed explicitly because the SDK otherwise reports
+        # *its own* version in the initialize handshake's serverInfo — a
+        # client asking which kicad-jlcpcb it is talking to was told "1.26.0".
+        self._server = Server("kicad-jlcpcb", version=__version__)
         # Session state — populated by load_project / create_project,
         # consumed by every tool that needs an active workspace.
         self._active_project: dict | None = None
