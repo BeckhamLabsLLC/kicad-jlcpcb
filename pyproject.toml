@@ -65,7 +65,7 @@ dev = [
     # Pinned to the exact version lint.yml and .pre-commit-config.yaml use.
     # An unpinned range meant a local `ruff format` could reformat files
     # that CI then rejected, or vice versa.
-    "ruff==0.15.0",
+    "ruff==0.16.9",
 ]
 
 [project.scripts]
