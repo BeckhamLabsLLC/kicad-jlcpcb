@@ -48,7 +48,7 @@ jobs:
       # Part sourcing being broken for every user is worth an issue.
       - name: Open an issue if upstream drifted
         if: failure() && github.event_name == 'schedule'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const title = 'Upstream contract tests are failing';
