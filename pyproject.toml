@@ -46,7 +46,7 @@ dependencies = [
     # with "'Server' object has no attribute 'list_tools'". Without this
     # bound a fresh `pip install -e .` resolves mcp 2.x and the plugin is
     # dead on arrival. Port to the 2.x API before lifting it.
-    "mcp>=1.0.0,<2",
+    "mcp>=1.0.0,<3",
     "httpx>=0.27.0",
 ]
 
