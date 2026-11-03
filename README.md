@@ -65,13 +65,14 @@ Three recurring friction points in small-batch PCB work, automated:
 
 ### Data dependencies
 
-Part sourcing depends on two **third-party, unofficial** services. Neither is
-run by JLCPCB, and neither is run by us. Both are overridable, so a fork can
-point at a mirror without touching code:
+Part sourcing depends on three live services, none with a documented public
+API, none run by us. All are overridable, so a fork can point at a mirror
+without touching code:
 
 | Service | Used for | Override |
 |---|---|---|
-| [`jlcsearch.tscircuit.com`](https://github.com/tscircuit/jlcsearch) | Catalog search, JLCPCB stock, basic/extended tier | `KJLC_JLCSEARCH_BASE` |
+| `jlcpcb.com` parts search | Part-number search, descriptive search, live JLCPCB stock, tier. Undocumented; tried first | `KJLC_JLCPCB_BASE` (`""` disables) |
+| [`jlcsearch.tscircuit.com`](https://github.com/tscircuit/jlcsearch) | Fallback search, structured resistor/capacitor lookup | `KJLC_JLCSEARCH_BASE` |
 | `easyeda.com` | Exact C-number lookup, symbols, pin maps | `KJLC_EASYEDA_BASE` |
 
 Resolved parts are cached in `~/.cache/kicad-jlcpcb/lcsc_parts.sqlite` for 24
@@ -81,7 +82,17 @@ hours. There is no bulk catalog download.
 > retired that data layout, the URL started returning 404, and part sourcing
 > broke silently for months before anyone noticed
 > ([#1](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/issues/1)). A weekly CI job
-> now tests both services directly, and you can repoint either one yourself.
+> now tests every service directly, and you can repoint any of them yourself.
+>
+> It happened again in October 2026: after a crawler rewrite, jlcsearch began
+> answering part-number searches with unrelated parts (a search for `SS34`
+> returned ferrite beads) and reporting stock as null
+> ([#9](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/issues/9)). Since v0.17
+> search goes to JLCPCB's own parts search first. Every result also has to
+> pass a relevance check before it is offered: a named part number or value
+> must actually appear on the part. When jlcpcb.com declines a request (it
+> protects the endpoint against automated clients), the plugin honours that,
+> backs off for five minutes, and uses jlcsearch meanwhile.
 
 Install KiCad:
 
@@ -269,7 +280,7 @@ src/kicad_jlcpcb_mcp/
   session.py        ← per-project state (.kicad_jlcpcb_session.json)
   project.py        ← .kicad_pro create / load / validate
   kicad_cli.py      ← async wrapper for kicad-cli (KiCad 8–10)
-  lcsc_client.py    ← jlcsearch + EasyEDA lookup, SQLite cache, basic-tier filter
+  lcsc_client.py    ← jlcpcb.com + jlcsearch + EasyEDA, relevance gate, SQLite cache
   part_library.py   ← EasyEDA client (EasyEdaRateLimiter + pin-map cache)
   pcb.py            ← pcbnew-based .kicad_pcb generator
   schematic.py      ← netlist spec → .kicad_sch

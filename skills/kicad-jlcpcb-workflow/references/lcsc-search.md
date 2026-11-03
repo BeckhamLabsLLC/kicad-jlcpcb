@@ -3,15 +3,21 @@
 ## Where the data comes from
 
 LCSC has never published a public REST API, and JLCPCB's own catalog endpoints
-are not documented for third-party use. The plugin therefore reads from two
-unofficial services, each doing the one thing it is good at:
+are not documented for third-party use. The plugin therefore reads from three
+sources, each doing what it is good at:
 
 | Source | Answers | Route |
 |---|---|---|
-| jlcsearch (`jlcsearch.tscircuit.com`) | free-text search, JLCPCB SMT stock, basic/extended tier, price breaks | `/components/list`, `/resistors/list`, `/capacitors/list` |
+| jlcpcb.com parts search | part-number and descriptive search, live JLCPCB SMT stock, basic/extended tier. Tried first | the endpoint behind jlcpcb.com/parts |
+| jlcsearch (`jlcsearch.tscircuit.com`) | fallback free-text search; structured resistor/capacitor lookup | `/components/list`, `/resistors/list`, `/capacitors/list` |
 | EasyEDA (`easyeda.com`) | exact C-number lookup, symbols, pin maps | `/api/products/<C-number>/components` |
 
-Both base URLs are overridable (`KJLC_JLCSEARCH_BASE`, `KJLC_EASYEDA_BASE`).
+All base URLs are overridable (`KJLC_JLCPCB_BASE`, `KJLC_JLCSEARCH_BASE`,
+`KJLC_EASYEDA_BASE`). jlcpcb.com protects its endpoint against automated
+clients. When it refuses a request the plugin stops asking for five minutes
+and uses jlcsearch alone, which since October 2026 has been unreliable for
+part numbers (issue #9). If results suddenly get worse mid-session, that is
+why.
 
 Resolved parts are cached in `~/.cache/kicad-jlcpcb/lcsc_parts.sqlite` for 24
 hours. **There is no bulk catalog download** — a cold query is a single HTTP
@@ -25,19 +31,22 @@ C-numbers are resolved through `lcsc_resolve_bom` with a `lcsc` field.
 
 Internally `lcsc_search`:
 
-1. **Routes chip passives to a structured lookup.** If the query contains a
-   resistance (`10k`, `4k7`, `100R`) or a capacitance (`0.1uF`, `100nF`) it
-   queries by parsed value rather than by text. This matters: many basic
-   passives have an *empty* description upstream and cannot be found by text
-   search at all — a text query for "10k 0603" returns a 510kΩ.
-2. **Otherwise searches free text, narrowing as needed.** Upstream AND-matches
-   every word, so a five-word spec usually returns nothing. The client drops
+1. **Searches a part number on its own.** If the query names one (`SS34`,
+   `AMS1117-3.3`, `ESP32-C3`), that token goes to jlcpcb.com alone. Only parts
+   carrying that part number are accepted.
+2. **Otherwise asks jlcpcb.com once with the whole query,** with JLCPCB's own
+   basic-only filter when `basic_only=true`.
+3. **Falls back to jlcsearch:** first the structured resistor/capacitor
+   routes, which filter on the parsed value, then free text. Free text drops
    the least-matchable words and retries, stopping at half the original word
-   count — one leftover word matches half the catalog.
-3. **Re-ranks locally** against the full query, then basic-first, then stock.
-4. **Filters `basic_only` and `stock_min` client-side.** Upstream's basic
-   filter is applied before its row limit and guts the result set, so the
-   plugin never sends it on the free-text route.
+   count, because one leftover word matches half the catalog.
+4. **Gates every candidate for relevance.** A value in the query (`10k`)
+   must be the part's value, so an 8.2k or a 510k sharing the package is
+   rejected. A descriptive query must match roughly half its words. An
+   upstream regression that returns popular-but-unrelated parts therefore
+   produces an empty result, not a wrong part.
+5. **Re-ranks locally** against the full query, then basic-first, then stock,
+   and applies `stock_min` client-side.
 
 ## Writing queries that work
 
@@ -64,9 +73,11 @@ reports the fee in `estimated_setup_fee_usd`.
 
 **Watch for `stock_unknown`.** A part resolved by exact C-number comes from
 EasyEDA, which reports LCSC *retail* stock — it reads 0 for parts with
-millions in JLCPCB inventory. The plugin flags these rather than printing a
-misleading number, and tries to backfill real stock from jlcsearch. When it
-can't, say so in the BOM checkpoint rather than presenting 0 as fact.
+millions in JLCPCB inventory. The plugin backfills real stock from
+jlcpcb.com, then jlcsearch, and flags the part when neither confirms it.
+When that happens, say so in the BOM checkpoint rather than presenting 0
+as fact. An `OUT OF STOCK` warning is different: jlcpcb.com confirmed zero,
+so swap the part.
 
 ## When a search comes back empty
 
@@ -75,8 +86,11 @@ with fewer words. Try, in order:
 
 1. `basic_only=false` — the part may only exist as extended.
 2. A different package, or drop the package entirely.
-3. A functional description instead of a part number (`3.3V LDO 500mA`
-   rather than an exact MPN; upstream's index does not reliably cover MPNs).
+3. If you know a candidate part number, search for it directly
+   (`AMS1117-3.3`, `SS34`). Part numbers are the most reliable query there
+   is. Otherwise try a shorter functional description (`3.3V LDO SOT-23-5`).
+4. Never fill the gap with a C-number from memory. If the user has one,
+   resolve it with `lcsc_resolve_bom` and `{"lcsc": "C..."}`.
 
 If *every* query returns empty, upstream is likely down or has changed shape.
 `KJLC_NETWORK_TESTS=1 pytest tests/test_network_contract.py` will say which.

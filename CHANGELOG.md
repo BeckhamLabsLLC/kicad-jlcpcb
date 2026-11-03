@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-03
+
+Part search had been returning the wrong parts since October, and the
+weekly contract job had been red about it for a month (#9). jlcsearch's
+crawler rewrite broke two things at once. Part-number queries began
+returning popular, unrelated parts: `SS34` returned ferrite beads,
+`AMS1117-3.3` returned sealing plugs. And stock came back null, which the
+plugin read as 0, so it filtered out the right part (C25804, the 10k 0603)
+and offered an 8.2k instead.
+
+### Fixed
+- **Every search result now passes a relevance gate.** A part number in the
+  query must appear on the part, a value (`10k`, `100nF`) must be the part's
+  value, and a descriptive query must match about half its words. An
+  upstream regression now produces an empty result instead of a wrong part
+  in your BOM.
+- **jlcpcb.com's own parts search is now the first source.** Part numbers
+  are searched on their own, descriptive queries once with JLCPCB's
+  server-side basic filter. jlcsearch remains the fallback, structured
+  passive routes included. `KJLC_JLCPCB_BASE` overrides the endpoint, and
+  `KJLC_JLCPCB_BASE=""` disables it.
+- **Null stock is unknown, not zero.** jlcsearch rows with `stock: null`
+  are flagged `stock_unknown` instead of being silently dropped by
+  `stock_min`.
+- **Stock backfill asks JLCPCB first.** `lcsc_resolve_bom` reported 0 stock
+  for C6186 (the AMS1117-3.3, 1.7M in stock) with no warning, because
+  jlcsearch said 0. Backfill now asks jlcpcb.com by C-number, ignores
+  jlcsearch rows reporting null or 0, and flags the part as unverified
+  when nobody confirms it.
+- **A part confirmed out of stock now warns.** Previously only parts with
+  unverifiable stock got a warning. `lcsc_resolve_bom` reports the two
+  cases separately in its summary.
+- **The flagship example's BOM was wrong.** It listed a JST-XH 3-pin
+  (C144394) as a JST-PH 2-pin, two 0805 capacitors on 0603 footprints, a
+  USB-C part other than the HRO TYPE-C-31-M-12 its footprint names, and
+  called four extended parts basic, which put the setup fee at $3 instead
+  of $12. The example now uses C131337, C19702, C59461 and C165948 and
+  reports the tiers JLCPCB actually assigns.
+
+### Changed
+- jlcpcb.com protects its parts search against automated clients. The
+  plugin respects that: requests are spaced 2s apart and a search sends at
+  most one. A refusal (HTTP 403/429) is not retried. jlcpcb.com is skipped
+  for five minutes and jlcsearch answers meanwhile.
+- An empty `lcsc_search` result now carries a `hint` that tells the model
+  to try a part number or fewer words, and never to invent a C-number.
+- The skill's search reference no longer advises avoiding part numbers.
+  They are now the most reliable query.
+- Contract tests now cover jlcpcb.com, and they pin the jlcsearch
+  part-number regression as an expected failure, so a fix upstream shows
+  up as an XPASS.
+
 ## [0.16.0] - 2026-09-19
 
 Two bugs in here made the plugin useless to anyone who installed it the way
@@ -587,7 +639,8 @@ Initial public release (Phase 1.6).
 - Some LCSC parts lack EasyEDA symbol data; for those, provide an explicit `pinmap` field in the component spec.
 - Auto-placement is a three-band grid, not an aesthetic layout. Final placement happens in EasyEDA before routing.
 
-[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.17.0
 [0.16.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.16.0
 [0.15.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.15.0
 [0.14.0]: https://github.com/BeckhamLabsLLC/kicad-jlcpcb/releases/tag/v0.14.0

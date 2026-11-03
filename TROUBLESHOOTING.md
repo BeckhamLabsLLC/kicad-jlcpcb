@@ -76,11 +76,12 @@ The plugin requires KiCad 8.0 or newer. Upgrade:
 
 ### Where part data comes from
 
-Two live services, neither official, both overridable:
+Three live services, none with a documented API, all overridable:
 
 | Service | Used for | Override |
 |---|---|---|
-| `jlcsearch.tscircuit.com` | Catalog search, JLCPCB stock, basic/extended tier | `KJLC_JLCSEARCH_BASE` |
+| `jlcpcb.com` parts search | Part-number search, descriptive search, live JLCPCB stock, tier. Undocumented; tried first | `KJLC_JLCPCB_BASE` (`""` disables) |
+| `jlcsearch.tscircuit.com` | Fallback search, structured resistor/capacitor lookup | `KJLC_JLCSEARCH_BASE` |
 | `easyeda.com` | Exact C-number lookup, symbols, pin maps | `KJLC_EASYEDA_BASE` |
 
 Results are cached per-part in `~/.cache/kicad-jlcpcb/lcsc_parts.sqlite` for
@@ -95,12 +96,21 @@ round trip.
    ```
    If these fail, part sourcing is broken for everyone, not just you —
    please [open an issue](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/issues).
-2. Loosen the query. Upstream AND-matches every word, so
+2. Look for `jlcpcb.com refused the request` in the server log. jlcpcb.com
+   protects its parts search against automated clients. When it refuses,
+   the plugin stops asking for five minutes and searches jlcsearch only,
+   which is weaker (see [#9](https://github.com/BeckhamLabsLLC/kicad-jlcpcb/issues/9)).
+   Wait, or give the part's C-number directly.
+3. Results are filtered for relevance. If the query names a part number
+   (`SS34`, `AMS1117-3.3`), only parts carrying it are returned. If it names
+   a value (`10k`), only parts with that value. An empty result can mean
+   "only unrelated parts matched", which is deliberate.
+4. Loosen the query. Upstream AND-matches every word, so
    `basic_only=false` and fewer terms both help. The client already drops
    the least-matchable words and retries, but it will not narrow a
    five-word query below three words — one leftover word matches half the
    catalog, and a wrong part is worse than no part.
-3. For a resistor or capacitor, put the value and the chip size in the
+5. For a resistor or capacitor, put the value and the chip size in the
    query (`10k 0603`, `0.1uF 0402`). Those route to a structured lookup
    that filters on the parsed value, which is far more accurate than text
    search. `0.1uF` and `100nF` are treated as the same part.
@@ -109,10 +119,12 @@ round trip.
 
 A part resolved by exact C-number comes from EasyEDA, which reports LCSC
 *retail* stock rather than JLCPCB SMT inventory — it reads 0 for parts with
-millions in stock. The plugin flags these rather than printing a misleading
-number. It tries to backfill real stock from jlcsearch, which works when the
-part is text-searchable; some passives with empty upstream descriptions
-aren't. Confirm on jlcpcb.com before ordering.
+millions in stock. The plugin backfills real stock from jlcpcb.com, then
+jlcsearch. If neither confirms it (jlcpcb.com refused, and jlcsearch reports
+null or 0, which since October 2026 it does for parts JLCPCB holds millions
+of), the part is flagged unverified rather than shown as 0. A part
+*confirmed* at 0 by jlcpcb.com gets an OUT OF STOCK warning instead.
+Confirm on jlcpcb.com before ordering.
 
 ### Stale prices or stock
 
