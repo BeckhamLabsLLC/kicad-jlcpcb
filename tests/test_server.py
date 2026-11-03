@@ -441,6 +441,18 @@ class TestToolRoutingForEveryTool:
         assert seen["package"] is None
 
     @pytest.mark.asyncio
+    async def test_empty_search_tells_the_model_not_to_invent_a_c_number(self, server, monkeypatch):
+        from kicad_jlcpcb_mcp import lcsc_client
+
+        async def fake_search(query, **kwargs):
+            return []
+
+        monkeypatch.setattr(lcsc_client, "search", fake_search)
+        result = await server._handle_tool("lcsc_search", {"query": "flux capacitor"})
+        assert result["count"] == 0
+        assert "Never invent a C-number" in result["hint"]
+
+    @pytest.mark.asyncio
     async def test_lcsc_resolve_bom_forwards_rows(self, server, monkeypatch):
         from kicad_jlcpcb_mcp import lcsc_client
 

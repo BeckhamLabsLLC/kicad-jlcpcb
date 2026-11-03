@@ -1,7 +1,8 @@
 """LCSC / JLCPCB part query client.
 
-Part data comes from two live sources, because no single public endpoint
-covers both free-text search and per-C-number lookup:
+Part data comes from three live sources, because no single public endpoint
+covers free-text search, part-number search and per-C-number lookup
+reliably:
 
   - **Search** — ``jlcsearch`` (https://jlcsearch.tscircuit.com), a public
     JSON mirror of JLCPCB's assembly catalog. ``/components/list`` answers
@@ -19,9 +20,22 @@ covers both free-text search and per-C-number lookup:
     retail stock, which reads 0 for parts with millions in JLCPCB
     inventory. See ``_enrich_stock_from_jlcsearch``.
 
-Both base URLs are overridable via environment variables (see
-``config.JLCSEARCH_BASE`` / ``config.EASYEDA_BASE``) so a fork can point
-at a self-hosted mirror. This module previously depended on a single
+  - **Part numbers, and the fallback** — the search endpoint behind
+    jlcpcb.com/parts (``_jlcpcb_search``). Undocumented, but it is JLCPCB's
+    own catalog: exact part-number matching, live SMT stock, tier. Since
+    October 2026 jlcsearch answers part-number queries ("SS34", "AMS1117")
+    with unrelated parts, so queries containing a part number go here
+    first, and descriptive queries fall back to it when jlcsearch returns
+    nothing relevant.
+
+Every result, whichever source it came from, must pass ``_is_relevant``
+before it is offered. A source returning *something* is not evidence that
+it returned the right thing, and a ferrite bead offered for a Schottky
+diode is worse than an empty result.
+
+All base URLs are overridable via environment variables (see
+``config.JLCSEARCH_BASE`` / ``config.EASYEDA_BASE`` / ``config.JLCPCB_BASE``)
+so a fork can point at a self-hosted mirror. This module previously depended on a single
 hardcoded third-party URL that was retired upstream, which broke every
 part lookup silently for months; the override exists so that is
 recoverable without a code change.
@@ -70,6 +84,21 @@ JLCSEARCH_MAX_LIMIT = 100
 SEARCH_TIMEOUT = 30.0
 SEARCH_RETRIES = 3
 
+# The route behind jlcpcb.com/parts. POST, JSON body, JSON response.
+JLCPCB_SEARCH_PATH = "/api/overseas-pcb-order/v1/shoppingCart/smtGood/selectSmtComponentList"
+JLCPCB_PAGE_SIZE = 50
+# jlcpcb.com protects this endpoint against automated clients and answers
+# 403 (or 429) when it decides to. That is a refusal, not a transient
+# fault: we do not retry it or try to look less automated. We stop asking
+# for a cooldown period and let jlcsearch answer meanwhile. Requests are
+# also spaced, and a search sends at most one.
+JLCPCB_REFUSAL_STATUSES = {403, 429}
+JLCPCB_MIN_INTERVAL = 2.0
+JLCPCB_COOLDOWN = 300.0
+JLCPCB_MAX_REQUESTS_PER_SEARCH = 1
+
+USER_AGENT = "kicad-jlcpcb (+https://github.com/BeckhamLabsLLC/kicad-jlcpcb)"
+
 
 class LcscError(RuntimeError):
     """An LCSC query failed (network, parse, or unknown C-number)."""
@@ -105,19 +134,25 @@ class Part:
         )
 
     def stock_warning(self) -> str | None:
-        """Return a warning if this part's stock figure is not authoritative.
+        """Return a warning if this part's stock is unverified or zero.
 
-        Parts resolved by exact C-number come from EasyEDA, which reports
-        LCSC retail stock rather than JLCPCB SMT inventory. Rather than
-        print a misleading 0, we flag it.
+        A part whose JLCPCB SMT stock could not be confirmed by any source
+        (EasyEDA reports LCSC retail stock, not JLCPCB inventory) is
+        flagged rather than shown with a misleading 0. A part confirmed out
+        of stock is flagged too: assembly would fail on it.
         """
-        if not self.extra.get("stock_unknown"):
-            return None
-        return (
-            f"{self.lcsc} ({self.mfr_part}) was resolved via EasyEDA; JLCPCB SMT "
-            "stock is not available from that source. Verify availability on "
-            "jlcpcb.com before ordering."
-        )
+        if self.extra.get("stock_unknown"):
+            return (
+                f"{self.lcsc} ({self.mfr_part}): JLCPCB SMT stock is not available "
+                "from the sources that answered. Verify availability on jlcpcb.com "
+                "before ordering."
+            )
+        if self.stock <= 0:
+            return (
+                f"{self.lcsc} ({self.mfr_part}) is OUT OF STOCK at JLCPCB. Choose an "
+                "alternative or JLCPCB cannot assemble it."
+            )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +341,18 @@ def _normalize_lcsc(value) -> str:
     return s if s.upper().startswith("C") else f"C{s}"
 
 
+def _jlcsearch_stock_flag(row: dict) -> dict:
+    """Flag a jlcsearch row whose stock figure is missing.
+
+    Since its October 2026 crawler rewrite jlcsearch serves many rows with
+    ``stock: null``, including C25804, the 10k 0603 that sits in more JLCPCB
+    BOMs than any other part. Read as 0, that null removed the right part
+    from every result, and search fell through to an 8.2k. Missing is
+    unknown, not zero.
+    """
+    return {"stock_unknown": True} if row.get("stock") is None else {}
+
+
 def _row_to_part_jlcsearch(row: dict) -> Part:
     """Convert one `/components/list` row into a Part."""
     return Part(
@@ -322,6 +369,52 @@ def _row_to_part_jlcsearch(row: dict) -> Part:
             "category": str(row.get("category") or ""),
             "subcategory": str(row.get("subcategory") or ""),
             "preferred": bool(row.get("is_preferred")),
+            **_jlcsearch_stock_flag(row),
+        },
+    )
+
+
+def _jlcpcb_price(prices) -> float:
+    """Return the qty-1 unit price from JLCPCB's ``componentPrices`` list."""
+    if not isinstance(prices, list):
+        return 0.0
+    best_qty: int | None = None
+    best_price = 0.0
+    for tier in prices:
+        if not isinstance(tier, dict):
+            continue
+        try:
+            qty = int(tier.get("startNumber"))
+            unit = float(tier.get("productPrice"))
+        except (TypeError, ValueError):
+            continue
+        if best_qty is None or qty < best_qty:
+            best_qty, best_price = qty, unit
+    return best_price
+
+
+def _row_to_part_jlcpcb(row: dict) -> Part:
+    """Convert one jlcpcb.com parts-search row into a Part.
+
+    ``componentLibraryType`` is ``"base"`` for the Basic library and
+    ``"expand"`` for Extended; ``stockCount`` is JLCPCB SMT inventory, the
+    figure a BOM decision actually needs.
+    """
+    return Part(
+        lcsc=_normalize_lcsc(row.get("componentCode")),
+        mfr_part=str(row.get("componentModelEn") or ""),
+        manufacturer=str(row.get("componentBrandEn") or ""),
+        description=str(row.get("describe") or ""),
+        package=str(row.get("componentSpecificationEn") or ""),
+        basic=str(row.get("componentLibraryType") or "").lower() == "base",
+        stock=int(row.get("stockCount") or 0),
+        price_usd=_jlcpcb_price(row.get("componentPrices")),
+        datasheet_url=str(row.get("dataManualUrl") or ""),
+        extra={
+            "category": str(row.get("secondSortName") or ""),
+            "subcategory": str(row.get("firstSortName") or row.get("componentTypeEn") or ""),
+            "preferred": bool(row.get("preferredComponentFlag")),
+            "source": "jlcpcb",
         },
     )
 
@@ -372,7 +465,7 @@ def _make_client() -> httpx.AsyncClient:
         base_url=config.JLCSEARCH_BASE,
         timeout=httpx.Timeout(SEARCH_TIMEOUT),
         headers={
-            "User-Agent": ("kicad-jlcpcb/0.2 (+https://github.com/BeckhamLabsLLC/kicad-jlcpcb)"),
+            "User-Agent": USER_AGENT,
             "Accept": "application/json",
         },
         follow_redirects=True,
@@ -449,6 +542,113 @@ async def _jlcsearch_components(
             "shape changed. Please open an issue."
         )
     return [r for r in rows if isinstance(r, dict)]
+
+
+class _JlcpcbThrottle:
+    """Process-wide request spacing and cooldown for jlcpcb.com.
+
+    The lock is created per event loop: an asyncio.Lock is bound to the
+    loop that first awaits it, and tests run each case on a fresh loop.
+    """
+
+    def __init__(self) -> None:
+        self.last_request = 0.0
+        self.blocked_until = 0.0
+        self._locks: dict[int, asyncio.Lock] = {}
+
+    def lock(self) -> asyncio.Lock:
+        loop_id = id(asyncio.get_running_loop())
+        if loop_id not in self._locks:
+            self._locks = {loop_id: asyncio.Lock()}
+        return self._locks[loop_id]
+
+    def blocked(self) -> bool:
+        return time.monotonic() < self.blocked_until
+
+    async def wait_turn(self) -> None:
+        delay = self.last_request + JLCPCB_MIN_INTERVAL - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        self.last_request = time.monotonic()
+
+
+_jlcpcb_throttle = _JlcpcbThrottle()
+
+# Generic nouns that jlcpcb.com's keyword search cannot match: its index
+# covers part numbers and parametric descriptions, which say "TVS" and
+# "Schottky", not "diode". Measured: "TVS 30V SMB" returns 39 SMB TVS
+# diodes and "TVS diode 30V SMB" returns none. They are dropped from the
+# keyword only; local ranking still scores the full query.
+_JLCPCB_NOISE_WORDS = {"diode", "diodes", "chip", "smd", "ic", "part", "component"}
+
+
+def _jlcpcb_keyword(query: str) -> str:
+    kept = [t for t in query.split() if t.lower() not in _JLCPCB_NOISE_WORDS]
+    return " ".join(kept) or query
+
+
+async def _jlcpcb_search(
+    client: httpx.AsyncClient, keyword: str, *, basic_only: bool = False
+) -> list[Part]:
+    """Query the parts search behind jlcpcb.com/parts. Never raises.
+
+    This is a fallback and a part-number fast path, so a failure here must
+    not turn a query jlcsearch could have answered into an error: problems
+    are logged and reported as no results. An absolute URL is used so the
+    shared client's jlcsearch ``base_url`` does not apply.
+    """
+    if not config.JLCPCB_BASE or not keyword.strip():
+        return []
+    body: dict = {"keyword": keyword, "currentPage": 1, "pageSize": JLCPCB_PAGE_SIZE}
+    if basic_only:
+        # Unlike jlcsearch's is_basic, this filters before paging, so it
+        # returns the basic matches rather than gutting a ranked page.
+        body["componentLibraryType"] = "base"
+    throttle = _jlcpcb_throttle
+    if throttle.blocked():
+        logger.debug("jlcpcb.com in cooldown; skipping %r", keyword)
+        return []
+    async with throttle.lock():
+        if throttle.blocked():
+            return []
+        await throttle.wait_turn()
+        try:
+            resp = await client.post(
+                f"{config.JLCPCB_BASE}{JLCPCB_SEARCH_PATH}",
+                json=body,
+                timeout=SEARCH_TIMEOUT,
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as e:
+            logger.warning("jlcpcb.com parts search failed for %r: %r", keyword, e)
+            return []
+        if resp.status_code in JLCPCB_REFUSAL_STATUSES:
+            throttle.blocked_until = time.monotonic() + JLCPCB_COOLDOWN
+            logger.warning(
+                "jlcpcb.com refused the request (HTTP %s); using jlcsearch only for "
+                "the next %.0f minutes",
+                resp.status_code,
+                JLCPCB_COOLDOWN / 60,
+            )
+            return []
+    if resp.status_code != 200:
+        logger.warning("jlcpcb.com parts search returned HTTP %s for %r", resp.status_code, keyword)
+        return []
+    try:
+        payload = resp.json()
+        rows = payload["data"]["componentPageInfo"]["list"] or []
+    except (ValueError, KeyError, TypeError) as e:
+        logger.warning(
+            "jlcpcb.com parts search returned an unexpected shape for %r (%r). "
+            "The endpoint may have changed; set KJLC_JLCPCB_BASE='' to disable it.",
+            keyword,
+            e,
+        )
+        return []
+    parts = [p for p in (_row_to_part_jlcpcb(r) for r in rows if isinstance(r, dict)) if p.lcsc]
+    if parts:
+        _cache_put(parts)
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +848,7 @@ def _row_to_part_passive(row: dict, kind: str) -> Part:
             "category": "Resistors" if kind == "resistors" else "Capacitors",
             "subcategory": "",
             "preferred": bool(row.get("is_preferred")),
+            **_jlcsearch_stock_flag(row),
         },
     )
 
@@ -670,11 +871,155 @@ def _score(part: Part, tokens: list[str]) -> int:
         if not t:
             continue
         aliases = _value_aliases(t)
+        ohms = _parse_resistance(t)
+        if ohms is not None:
+            # "4k7" in a query is "4.7kΩ" in the catalog.
+            aliases = aliases | _resistance_aliases(ohms)
         if any(re.search(rf"(?<![0-9a-z]){re.escape(a)}(?![0-9a-z])", haystack) for a in aliases):
             total += 2
         elif any(a in haystack for a in aliases):
             total += 1
     return total
+
+
+# Package families as written in a query: "SOT-23-5", "QFN32", "DO-214AA",
+# "TO-220". A prefix followed by a digit is a package, not a part number.
+_PACKAGE_TOKEN_RE = re.compile(
+    r"^(sot|sod|sop|soic|ssop|tssop|htssop|msop|vssop|esop|hsop|qfn|vqfn|uqfn|wqfn|"
+    r"dfn|udfn|wdfn|son|wson|lqfp|tqfp|qfp|bga|lga|wlcsp|csp|lfcsp|do|to|sma|smb|smc|"
+    r"dip|sip|dpak|d2pak|hc)-?\d"
+    # KiCad-style chip footprints ("R0603", "C0402"). Not a bare r/c/l
+    # prefix: that would swallow C-numbers ("C6186") and part numbers
+    # ("L7805").
+    r"|^[rcl](0201|0402|0603|0805|1206|1210|2512)$"
+)
+# Values and dimensions: "3.3v", "100na", "16mhz", "2.54mm", "4k7", "2x20".
+_VALUE_TOKEN_RE = re.compile(r"^\d+(\.\d+)?[a-z\u00b5\u03a9%]{0,4}$|^\d+x\d+$|^\d+[rkm]\d+$")
+_NON_ALNUM_RE = re.compile(r"[^0-9a-z]")
+
+
+def _part_number_tokens(tokens: list[str]) -> list[str]:
+    """Return the tokens that look like a manufacturer part number.
+
+    A part number mixes letters and digits ("ss34", "ams1117-3.3",
+    "esp32-c3", "1n4148") and is not a value ("3.3v"), a chip size
+    ("0603") or a package ("sot-223"). When a query names one, that is the
+    part the user wants, and only parts carrying it are relevant.
+    """
+    out = []
+    for t in tokens:
+        t = t.lower()
+        norm = _NON_ALNUM_RE.sub("", t)
+        if len(norm) < 4:
+            continue
+        if not (any(c.isdigit() for c in norm) and any(c.isalpha() for c in norm)):
+            continue
+        if _CHIP_PACKAGE_RE.match(norm) or _PACKAGE_TOKEN_RE.match(t):
+            continue
+        if _VALUE_TOKEN_RE.match(t) or _parse_resistance(t) or _parse_capacitance(t):
+            continue
+        out.append(t)
+    return out
+
+
+def _trim_number(x: float) -> str:
+    return f"{x:.4f}".rstrip("0").rstrip(".")
+
+
+def _resistance_aliases(ohms: float) -> set[str]:
+    """Spellings of a resistance as catalog descriptions write them.
+
+    4.7kΩ is written "4.7kΩ" upstream; a schematic writes "4k7". Both
+    must match each other, and neither may match "14.7kΩ".
+    """
+    out: set[str] = set()
+    for unit, mult in (("", 1.0), ("k", 1e3), ("m", 1e6)):
+        scaled = ohms / mult
+        if not 1 <= scaled < 1000:
+            continue
+        text = _trim_number(scaled)
+        if unit:
+            out.add(f"{text}{unit}")
+            if "." in text:
+                whole, frac = text.split(".")
+                out.add(f"{whole}{unit}{frac}")
+        else:
+            out.update({text, f"{text}r", f"{text}\u03c9"})
+    return out
+
+
+def _value_token_aliases(tokens: list[str]) -> list[set[str]]:
+    """One alias set per resistance/capacitance token in the query."""
+    out = []
+    for t in tokens:
+        cap = _parse_capacitance(t)
+        if cap is not None:
+            out.append(_value_aliases(t))
+            continue
+        ohms = _parse_resistance(t)
+        if ohms is not None:
+            out.append(_resistance_aliases(ohms) | {t})
+    return out
+
+
+def _has_value(part: Part, aliases: set[str]) -> bool:
+    hay = f"{part.description} {part.mfr_part}".lower()
+    return any(re.search(rf"(?<![0-9a-z.]){re.escape(a)}(?![0-9a-z])", hay) for a in aliases)
+
+
+# Package names with no digit that people put in queries.
+_BARE_PACKAGE_WORDS = {"sma", "smb", "smc", "smaf", "smbf", "dpak", "d2pak"}
+
+
+def _package_tokens(tokens: list[str]) -> list[str]:
+    """Tokens naming a package: "0603", "SOT-23-5", "SMB", "QFN-32"."""
+    return [
+        t
+        for t in tokens
+        if _CHIP_PACKAGE_RE.match(t) or _PACKAGE_TOKEN_RE.match(t) or t in _BARE_PACKAGE_WORDS
+    ]
+
+
+def _has_package(part: Part, token: str) -> bool:
+    """Punctuation-insensitive: "SOT-23-5" matches "SOT23-5" and "SOT-23-5L".
+
+    The description is searched too, because upstream sometimes puts the
+    real package there and a generic one ("SMD") in the package field.
+    """
+    want = _NON_ALNUM_RE.sub("", token.lower())
+    # "R0603" / "C0402" are KiCad footprint names; the catalog says "0603".
+    if re.fullmatch(r"[rcl]\d{4}", want):
+        want = want[1:]
+    if not want:
+        return True
+    hay = _NON_ALNUM_RE.sub("", f"{part.package} {part.description}".lower())
+    return want in hay
+
+
+def _is_relevant(part: Part, tokens: list[str], pn_tokens: list[str]) -> bool:
+    """Does this part plausibly answer the query at all?
+
+    With a part number in the query, the part must carry it (punctuation
+    ignored, so "AMS1117-3.3" matches "AMS1117-3.3" and "ESP32-C3" matches
+    "ESP32-C3-MINI-1"). Otherwise at least one query token must appear in
+    its description, part number or package — and a value the query names
+    ("10k", "100nF") must be the part's value, so a "10k 0603" query is not
+    answered with an 8.2k that merely shares the package. A package the
+    query names ("0603", "SMB", "SOT-23-5") must be the part's package. This is the gate
+    that stops an unrelated row from an upstream regression being offered.
+    """
+    if pn_tokens:
+        hay = _NON_ALNUM_RE.sub("", f"{part.mfr_part} {part.lcsc} {part.description}".lower())
+        return any(_NON_ALNUM_RE.sub("", t) in hay for t in pn_tokens)
+    if not all(_has_value(part, aliases) for aliases in _value_token_aliases(tokens)):
+        return False
+    if not all(_has_package(part, t) for t in _package_tokens(tokens)):
+        return False
+    # A boundary match scores 2 and a substring 1 (see `_score`), so this
+    # asks for roughly half the query on boundaries. One shared token is
+    # not enough: "TVS diode 30V SMB" must not admit a polyfuse that merely
+    # says "30V".
+    return _score(part, tokens) >= max(1, len([t for t in tokens if t]))
 
 
 # Ordered most- to least-likely to appear verbatim in an upstream
@@ -694,16 +1039,18 @@ def _token_keep_rank(token: str) -> tuple:
 
 
 async def _search_narrowing(
-    client: httpx.AsyncClient,
+    fetch,
     tokens: list[str],
     *,
     package: str | None,
     accept,
     max_attempts: int = 5,
+    label: str = "jlcsearch",
 ) -> list[Part]:
-    """Query jlcsearch, dropping the least-matchable tokens until it bites.
+    """Query a source, dropping the least-matchable tokens until it bites.
 
-    jlcsearch AND-matches every token, so a natural-language spec like
+    `fetch(query, package)` returns Parts. Both sources AND-match tokens
+    (jlcsearch strictly; jlcpcb.com mostly), so a natural-language spec like
     "TVS diode 30V 3000W SMB" returns exactly zero rows while "TVS diode
     SMB" returns a hundred. Without this, every descriptive query the
     plugin generates would come back empty.
@@ -738,23 +1085,12 @@ async def _search_narrowing(
             seen.add((query, pkg))
             attempts += 1
 
-            # Deliberately *not* passing is_basic to the API: it filters
-            # before applying the row limit, which collapses a 100-row
-            # candidate pool to two or three poor matches. Fetch the full
-            # pool and filter locally instead.
-            rows = await _jlcsearch_components(
-                client, search=query, package=pkg, limit=JLCSEARCH_MAX_LIMIT
-            )
-            parts = [p for p in (_row_to_part_jlcsearch(r) for r in rows) if p.lcsc]
-            if parts:
-                # Everything we saw is worth caching, even rows this query
-                # rejects — a later get_part may want them.
-                _cache_put(parts)
-            usable = accept(parts)
+            usable = accept(await fetch(query, pkg))
             if usable:
                 if k < len(ordered) or pkg != package:
                     logger.debug(
-                        "jlcsearch: narrowed %r -> %r (package=%s, %d usable)",
+                        "%s: narrowed %r -> %r (package=%s, %d usable)",
+                        label,
                         " ".join(tokens),
                         query,
                         pkg,
@@ -781,9 +1117,11 @@ async def search(
 ) -> list[Part]:
     """Search the JLCPCB catalog by free-text query.
 
-    jlcsearch AND-matches every token, so a long descriptive query is
-    progressively narrowed (see `_search_narrowing`) until it returns
-    candidates. Those are then re-ranked locally against the *full* query,
+    Sources are tried in order (see the body): jlcpcb.com, then jlcsearch's
+    structured passive routes, then jlcsearch free text. A long descriptive
+    query is progressively narrowed (see `_search_narrowing`) until it
+    returns candidates, and every candidate must pass `_is_relevant`.
+    Survivors are re-ranked locally against the *full* query,
     then by basic-first and descending stock. `stock_min` is applied
     client-side so a part with unknown stock is never silently dropped.
 
@@ -801,8 +1139,10 @@ async def search(
     # candidate pool for passives comes back full of wrong-size parts.
     effective_package = package or _extract_package(tokens)
 
+    pn_tokens = _part_number_tokens(tokens)
+
     def accept(parts: list[Part]) -> list[Part]:
-        keep = parts
+        keep = [p for p in parts if _is_relevant(p, tokens, pn_tokens)]
         if basic_only:
             keep = [p for p in keep if p.basic]
         keep = [p for p in keep if p.stock >= int(stock_min) or p.extra.get("stock_unknown")]
@@ -814,11 +1154,52 @@ async def search(
     try:
         ranked: list[Part] = []
 
-        # Chip passives go to the structured routes first: free-text search
-        # cannot find the ones with an empty upstream description, which
-        # includes most of the basic-tier jellybeans a board is made of.
+        async def from_jlcsearch(q: str, pkg: str | None) -> list[Part]:
+            # Deliberately *not* passing is_basic: on this route it filters
+            # before the row limit, collapsing a 100-row candidate pool to
+            # two or three poor matches. Fetch the pool, filter locally.
+            rows = await _jlcsearch_components(
+                client, search=q, package=pkg, limit=JLCSEARCH_MAX_LIMIT
+            )
+            parts = [p for p in (_row_to_part_jlcsearch(r) for r in rows) if p.lcsc]
+            if parts:
+                # Worth caching even if rejected: a later get_part may want it.
+                _cache_put(parts)
+            return parts
+
+        async def from_jlcpcb(q: str, _pkg: str | None) -> list[Part]:
+            return await _jlcpcb_search(client, _jlcpcb_keyword(q), basic_only=basic_only)
+
+        # Source order (issue #9). JLCPCB's own search is authoritative and
+        # has live stock; jlcsearch's free-text route has answered part
+        # numbers with unrelated parts, and its stock column is often null,
+        # since October 2026. jlcsearch stays as the fallback, and its
+        # structured passive routes still find parts with empty descriptions.
+        #
+        # 1. A part number is searched on its own: JLCPCB ranks fuzzily, so
+        #    "AMS1117-3.3" beats "AMS1117-3.3 LDO SOT-223". The rest of the
+        #    query is left to local ranking.
+        #    Only the first part number: one jlcpcb.com request per search.
+        if pn_tokens:
+            ranked = accept(await from_jlcpcb(pn_tokens[0], None))
+        # 2. Anything else: one JLCPCB request for the whole query. Not a
+        #    narrowing loop: jlcpcb.com reliably refuses the follow-up
+        #    request (observed from CI as well as locally), and a refusal
+        #    costs every search for the next five minutes. jlcsearch does
+        #    the narrowing.
+        else:
+            ranked = await _search_narrowing(
+                from_jlcpcb,
+                raw_tokens,
+                package=None,
+                accept=accept,
+                max_attempts=JLCPCB_MAX_REQUESTS_PER_SEARCH,
+                label="jlcpcb.com",
+            )
+
+        # 3. Chip passives: jlcsearch's structured routes.
         passive = _detect_passive(tokens)
-        if passive:
+        if not ranked and passive:
             kind, value = passive
             try:
                 rows = await _jlcsearch_passive(
@@ -836,9 +1217,10 @@ async def search(
                 _cache_put(parts)
             ranked = accept(parts)
 
+        # 4. jlcsearch free text.
         if not ranked:
             ranked = await _search_narrowing(
-                client, raw_tokens, package=effective_package, accept=accept
+                from_jlcsearch, raw_tokens, package=effective_package, accept=accept
             )
     finally:
         if own_client:
@@ -850,27 +1232,39 @@ async def search(
 async def _enrich_stock_from_jlcsearch(part: Part, client: httpx.AsyncClient) -> Part:
     """Best-effort: replace EasyEDA's placeholder stock with real JLCPCB stock.
 
-    EasyEDA knows the part but not JLCPCB's SMT inventory. jlcsearch knows
-    the inventory but cannot be queried by C-number, so we search for the
-    manufacturer part number and accept the row only if its C-number
-    matches exactly. That works for most ICs and discretes; some passives
-    carry an empty description upstream and aren't indexed, in which case
-    the part keeps its `stock_unknown` flag.
-    """
-    if not part.mfr_part:
-        return part
-    try:
-        rows = await _jlcsearch_components(client, search=part.mfr_part, limit=20)
-    except LcscError as e:
-        logger.debug("Stock enrichment for %s failed: %s", part.lcsc, e)
-        return part
+    EasyEDA knows the part but not JLCPCB's SMT inventory. We ask
+    jlcpcb.com by C-number, then jlcsearch by C-number and by manufacturer
+    part number, and accept a row only if its C-number matches exactly. If
+    none of them knows the part, it keeps its `stock_unknown` flag rather
+    than reporting a stock figure we never saw.
 
-    for row in rows:
-        if _normalize_lcsc(row.get("lcsc")) != part.lcsc:
+    jlcpcb.com goes first because it is JLCPCB's own inventory. Since
+    October 2026 jlcsearch has reported 0 or null stock for parts JLCPCB
+    holds millions of (C6186, the AMS1117-3.3), and has answered
+    part-number queries with unrelated rows (issue #9).
+    """
+    candidates = await _jlcpcb_search(client, part.lcsc)
+    for term in dict.fromkeys(t for t in (part.lcsc, part.mfr_part) if t):
+        if any(c.lcsc == part.lcsc for c in candidates):
+            break
+        try:
+            rows = await _jlcsearch_components(client, search=term, limit=20)
+        except LcscError as e:
+            logger.debug("Stock enrichment for %s via %r failed: %s", part.lcsc, term, e)
             continue
-        enriched = _row_to_part_jlcsearch(row)
-        # Prefer jlcsearch for anything it is authoritative about, but keep
-        # EasyEDA's identity fields when jlcsearch's are blank.
+        # Since October 2026 jlcsearch reports null or 0 for parts JLCPCB
+        # holds millions of, so neither tells us anything EasyEDA didn't.
+        candidates = [
+            c
+            for c in (_row_to_part_jlcsearch(r) for r in rows)
+            if not c.extra.get("stock_unknown") and c.stock > 0
+        ]
+
+    for enriched in candidates:
+        if enriched.lcsc != part.lcsc:
+            continue
+        # Prefer the inventory source for stock, tier and price, but keep
+        # EasyEDA's identity fields when the inventory row leaves them blank.
         enriched.mfr_part = enriched.mfr_part or part.mfr_part
         enriched.manufacturer = enriched.manufacturer or part.manufacturer
         enriched.description = enriched.description or part.description
@@ -961,6 +1355,7 @@ async def resolve_bom(
     unresolved = []
     seen_extended_lcsc = set()
     stock_unverified = 0
+    out_of_stock = 0
     try:
         for row in rows:
             try:
@@ -976,7 +1371,10 @@ async def resolve_bom(
             sw = part.stock_warning()
             if sw:
                 warnings.append(sw)
-                stock_unverified += 1
+                if part.extra.get("stock_unknown"):
+                    stock_unverified += 1
+                else:
+                    out_of_stock += 1
             resolved.append({"row": row, "part": asdict(part), "warnings": warnings})
     finally:
         if own_client:
@@ -990,6 +1388,8 @@ async def resolve_bom(
     )
     if stock_unverified:
         summary += f" {stock_unverified} part(s) have unverified JLCPCB stock."
+    if out_of_stock:
+        summary += f" {out_of_stock} part(s) are OUT OF STOCK at JLCPCB."
     return {
         "resolved": resolved,
         "unresolved": unresolved,

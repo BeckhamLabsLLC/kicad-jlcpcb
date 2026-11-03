@@ -11,6 +11,13 @@ updates:
       interval: monthly
     open-pull-requests-limit: 5
     labels: ["dependencies"]
+    # ruff is pinned in three places that must agree: pyproject.toml,
+    # lint.yml and .pre-commit-config.yaml. Dependabot can only bump the
+    # first, so its PRs pass CI (lint.yml still runs the old version) while
+    # silently desyncing local formatting from CI (#8, #11). Bump all three
+    # by hand, in one commit.
+    ignore:
+      - dependency-name: ruff
 
   - package-ecosystem: github-actions
     directory: "/"

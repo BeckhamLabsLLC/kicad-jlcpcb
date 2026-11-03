@@ -30,28 +30,28 @@
     {
       "ref": "J1",
       "value": "USB-C Receptacle",
-      "lcsc": "C2765186",
+      "lcsc": "C165948",
       "lib": "Connector_USB",
       "fp": "USB_C_Receptacle_HRO_TYPE-C-31-M-12"
     },
     {
       "ref": "J2",
       "value": "JST-PH 2-pin battery",
-      "lcsc": "C144394",
+      "lcsc": "C131337",
       "lib": "Connector_JST",
       "fp": "JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical"
     },
     {
       "ref": "J3",
       "value": "Moisture probe 1",
-      "lcsc": "C144394",
+      "lcsc": "C131337",
       "lib": "Connector_JST",
       "fp": "JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical"
     },
     {
       "ref": "J4",
       "value": "Moisture probe 2",
-      "lcsc": "C144394",
+      "lcsc": "C131337",
       "lib": "Connector_JST",
       "fp": "JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical"
     },
@@ -78,15 +78,15 @@
     },
     {
       "ref": "C1",
-      "value": "10uF tantalum (Vin)",
-      "lcsc": "C15850",
+      "value": "10uF (Vin)",
+      "lcsc": "C19702",
       "lib": "Capacitor_SMD",
       "fp": "C_0603_1608Metric"
     },
     {
       "ref": "C2",
-      "value": "22uF tantalum (Vout)",
-      "lcsc": "C45783",
+      "value": "22uF (Vout)",
+      "lcsc": "C59461",
       "lib": "Capacitor_SMD",
       "fp": "C_0603_1608Metric"
     },

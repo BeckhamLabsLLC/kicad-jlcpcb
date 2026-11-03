@@ -35,6 +35,39 @@ pytest tests/test_schematic.py -v
 pytest tests/test_pcb.py::TestPlace::test_three_band_layout -v
 ```
 
+### Running the plugin from your clone
+
+Opening the clone in Claude Code shows `kicad-jlcpcb` as a project MCP
+server that fails with `CONNECTION_CLOSED`. That is expected: `.mcp.json`
+uses `${CLAUDE_PLUGIN_ROOT}`, which Claude Code substitutes only for
+plugin-provided configs. Decline the project server and install the clone as
+a plugin instead:
+
+```
+/plugin marketplace add /abs/path/to/kicad-jlcpcb
+/plugin install kicad-jlcpcb@beckhamlabs
+```
+
+### Live upstream tests, and forks
+
+Every test above is offline. Part data comes from three live services (see
+[Data dependencies](README.md#data-dependencies)), and
+`tests/test_network_contract.py` checks their response shapes:
+
+```bash
+KJLC_NETWORK_TESTS=1 pytest tests/test_network_contract.py -v
+```
+
+Keep these runs occasional. jlcpcb.com refuses automated clients that ask
+too often, and jlcsearch is a free community service.
+
+**On a fork,** GitHub disables scheduled workflows until you enable Actions,
+so the weekly `upstream contract` job (`.github/workflows/contract.yml`) does
+not run until you do. It is the only thing that notices an upstream change
+before your users do. Enable it under *Actions*, or point the client at your
+own mirror with `KJLC_JLCPCB_BASE`, `KJLC_JLCSEARCH_BASE` and
+`KJLC_EASYEDA_BASE`.
+
 ## Code style
 
 We use [ruff](https://docs.astral.sh/ruff/) for both linting and formatting. Before opening a PR:

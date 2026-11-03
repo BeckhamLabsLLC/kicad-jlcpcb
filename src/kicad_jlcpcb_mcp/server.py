@@ -136,11 +136,22 @@ class KicadJlcpcbServer:
                 stock_min=args.get("stock_min", 1),
                 limit=args.get("limit", 20),
             )
-            return {
+            response = {
                 "query": args["query"],
                 "count": len(results),
                 "results": [asdict(p) for p in results],
             }
+            if not results:
+                # An empty list reads as "this part does not exist", and the
+                # model then falls back to recalling a C-number from memory.
+                response["hint"] = (
+                    "No relevant part matched. Results are filtered for relevance, so "
+                    "this is not a catalog dump. Try a manufacturer part number "
+                    "(e.g. 'AMS1117-3.3'), fewer descriptive words, or basic_only=false. "
+                    "Never invent a C-number: if the user has one, pass it to "
+                    "lcsc_resolve_bom as {'lcsc': 'C...'}."
+                )
+            return response
 
         if name == "lcsc_resolve_bom":
             from . import lcsc_client

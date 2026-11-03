@@ -5,6 +5,7 @@ live routes the client actually uses:
 
   - jlcsearch  /components/list   (free-text search)
   - jlcsearch  /resistors/list, /capacitors/list  (structured passives)
+  - jlcpcb.com parts search (POST), served by the ``"jlcpcb"`` route key
 
 Per-C-number lookup goes through ``part_library._fetch_easyeda_raw``,
 which is monkeypatched directly rather than faked at the HTTP layer.
@@ -112,6 +113,65 @@ STRUCTURED_CAPACITOR_ROW = {
     ),
 }
 
+# What jlcsearch's free-text route actually returned for "SS34 SMB" and
+# "AMS1117-3.3" in November 2026 (issue #9): popular, unrelated parts.
+JUNK_FERRITE_ROW = {
+    "lcsc": 87063,
+    "mfr": "BLM18SG260TN1D",
+    "package": "0603",
+    "description": "1 26Ω@100MHz 6A 7mΩ ±25% 0603 Ferrite Beads ROHS",
+    "stock": 22343,
+    "price": "1-99:0.0674",
+    "category": "Filters",
+    "subcategory": "Ferrite Beads",
+    "is_basic": True,
+    "is_preferred": False,
+}
+JUNK_LDO_ROW = {
+    "lcsc": 22466412,
+    "mfr": "HT7533S",
+    "package": "SOT-23-3",
+    "description": "100mA 3.3V 36V Fixed Positive SOT-23-3 Low Drop Out (LDO) Regulators",
+    "stock": 27394,
+    "price": "1-199:0.037",
+    "category": "Power Management",
+    "subcategory": "LDO",
+    "is_basic": True,
+    "is_preferred": False,
+}
+
+# jlcpcb.com parts-search row, trimmed to the keys the client reads.
+JLCPCB_SS34_ROW = {
+    "componentCode": "C8678",
+    "componentModelEn": "SS34",
+    "componentBrandEn": "MDD(Microdiode Semiconductor)",
+    "componentSpecificationEn": "SMA(DO-214AC)",
+    "componentLibraryType": "base",
+    "stockCount": 3178009,
+    "describe": "40V 3A 550mV@3A SMA(DO-214AC) Schottky Diodes",
+    "componentPrices": [
+        {"startNumber": 200, "endNumber": 599, "productPrice": 0.0283},
+        {"startNumber": 1, "endNumber": 199, "productPrice": 0.0351},
+    ],
+    "dataManualUrl": "https://www.lcsc.com/datasheet/C8678.pdf",
+    "firstSortName": "Schottky Diodes",
+    "secondSortName": "Diodes",
+    "preferredComponentFlag": False,
+}
+JLCPCB_SS34B_ROW = dict(
+    JLCPCB_SS34_ROW,
+    componentCode="C13762",
+    componentModelEn="SS34B",
+    componentSpecificationEn="SMB(DO-214AA)",
+    componentLibraryType="expand",
+    stockCount=216304,
+)
+
+
+def jlcpcb(*rows) -> dict:
+    return {"code": 200, "data": {"componentPageInfo": {"total": len(rows), "list": list(rows)}}}
+
+
 # EasyEDA `result` payload, trimmed to the keys the client reads.
 EASYEDA_RESULT = {
     "title": "0603WAF1002T5E",
@@ -134,7 +194,10 @@ def make_fake_client(routes: dict | None = None) -> MagicMock:
     """Build a fake AsyncClient that serves jlcsearch JSON routes.
 
     `routes` maps a path ("/components/list") to either a payload dict or
-    a callable taking the query params and returning a payload.
+    a callable taking the query params and returning a payload. The key
+    ``"jlcpcb"`` serves the jlcpcb.com POST route the same way, with the
+    JSON body in place of the params. An unrouted request answers 404,
+    which every caller treats as "no results".
     """
     routes = routes or {}
     client = MagicMock(spec=httpx.AsyncClient)
@@ -151,7 +214,20 @@ def make_fake_client(routes: dict | None = None) -> MagicMock:
         resp.json = MagicMock(return_value=payload)
         return resp
 
+    async def fake_post(url, json=None, **kwargs):
+        resp = MagicMock(spec=httpx.Response)
+        handler = routes.get("jlcpcb") if url.endswith(lcsc_client.JLCPCB_SEARCH_PATH) else None
+        if handler is None:
+            resp.status_code = 404
+            resp.json = MagicMock(return_value={})
+            return resp
+        payload = handler(json or {}) if callable(handler) else handler
+        resp.status_code = 200
+        resp.json = MagicMock(return_value=payload)
+        return resp
+
     client.get = AsyncMock(side_effect=fake_get)
+    client.post = AsyncMock(side_effect=fake_post)
     client.aclose = AsyncMock()
     return client
 
@@ -164,6 +240,13 @@ def components(*rows) -> dict:
 def isolated_cache(tmp_path, monkeypatch):
     """Point the SQLite cache at tmp_path so tests never touch ~/.cache."""
     monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def unthrottled_jlcpcb(monkeypatch):
+    """Fresh jlcpcb.com throttle state, with no spacing between requests."""
+    monkeypatch.setattr(lcsc_client, "_jlcpcb_throttle", lcsc_client._JlcpcbThrottle())
+    monkeypatch.setattr(lcsc_client, "JLCPCB_MIN_INTERVAL", 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +394,8 @@ class TestSearch:
 
     async def test_includes_extended_when_allowed(self):
         client = make_fake_client({"/components/list": components(RESISTOR_ROW, EXTENDED_ROW)})
-        results = await lcsc_client.search("resistor", basic_only=False, client=client)
+        # Both rows must share a token with the query to pass the relevance gate.
+        results = await lcsc_client.search("resistor diode", basic_only=False, client=client)
         assert {p.lcsc for p in results} == {"C23192", "C113998"}
 
     async def test_basic_filter_is_applied_locally_not_by_the_api(self):
@@ -397,9 +481,239 @@ class TestSearch:
             return components(RESISTOR_ROW)
 
         client = make_fake_client({"/components/list": handler})
-        results = await lcsc_client.search("alpha beta gamma delta", basic_only=True, client=client)
+        results = await lcsc_client.search(
+            "thick film chip resistor", basic_only=True, client=client
+        )
         assert [p.lcsc for p in results] == ["C23192"]
         assert client.get.call_count > 1
+
+
+class TestPartNumberTokens:
+    @pytest.mark.parametrize(
+        "query, expected",
+        [
+            ("SS34 SMB", ["ss34"]),
+            ("AMS1117-3.3 LDO SOT-223", ["ams1117-3.3"]),
+            ("ESP32-C3", ["esp32-c3"]),
+            ("C6186", ["c6186"]),
+            ("L7805 TO-220", ["l7805"]),
+            ("1N4148W SOD-123", ["1n4148w"]),
+        ],
+    )
+    def test_part_numbers_are_recognised(self, query, expected):
+        assert lcsc_client._part_number_tokens(query.lower().split()) == expected
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "TVS diode 30V 3000W SMB",
+            "10k 0603",
+            "0.1uF 0402 X7R",
+            "3.3V LDO 500mA SOT-23-5",
+            "pin header 2x20 2.54mm",
+            "R0603 4k7",
+            "16MHz crystal HC-49S",
+        ],
+    )
+    def test_values_packages_and_words_are_not(self, query):
+        assert lcsc_client._part_number_tokens(query.lower().split()) == []
+
+
+class TestRelevanceGate:
+    """Issue #9: jlcsearch began answering part-number queries with junk.
+
+    A source returning rows is not evidence it returned the right rows.
+    """
+
+    async def test_unrelated_rows_for_a_part_number_are_never_offered(self):
+        client = make_fake_client({"/components/list": components(JUNK_FERRITE_ROW)})
+        assert await lcsc_client.search("SS34 SMB", client=client) == []
+
+    async def test_a_similar_part_does_not_stand_in_for_the_named_one(self):
+        # HT7533 is a 3.3V LDO, but the user asked for an AMS1117.
+        client = make_fake_client({"/components/list": components(JUNK_LDO_ROW)})
+        results = await lcsc_client.search("AMS1117-3.3 LDO", basic_only=False, client=client)
+        assert results == []
+
+    async def test_one_shared_token_is_not_enough(self):
+        polyfuse = dict(
+            RESISTOR_ROW,
+            lcsc=209712,
+            mfr="SMD1812P035TF/30",
+            package="1812",
+            description="350mA 30V 1812 PTC Resettable Fuses",
+            is_basic=False,
+        )
+        client = make_fake_client({"/components/list": components(polyfuse, EXTENDED_ROW)})
+        results = await lcsc_client.search("TVS diode 30V SMB", basic_only=False, client=client)
+        assert [p.lcsc for p in results] == ["C113998"]
+
+    async def test_descriptive_query_drops_rows_sharing_no_token(self):
+        client = make_fake_client({"/components/list": components(JUNK_FERRITE_ROW, EXTENDED_ROW)})
+        results = await lcsc_client.search("TVS diode", basic_only=False, client=client)
+        assert [p.lcsc for p in results] == ["C113998"]
+
+
+class TestValueGate:
+    @pytest.mark.parametrize(
+        "query, description, relevant",
+        [
+            ("10k 0603", "100mW 10kΩ 75V Thick Film Resistor 0603", True),
+            ("10k 0603", "100mW 8.2kΩ 75V Thick Film Resistor 0603", False),
+            ("10k 0603", "100mW 510kΩ 75V Thick Film Resistor 0603", False),
+            ("4k7 0402", "62.5mW 4.7kΩ Thick Film Resistor 0402", True),
+            ("4k7 0402", "62.5mW 14.7kΩ Thick Film Resistor 0402", False),
+            ("100r 0603", "100mW 100Ω Thick Film Resistor 0603", True),
+            ("0.1uF 0402", "100nF 16V X7R ±10% 0402 MLCC", True),
+            ("0.1uF 0402", "1uF 16V X7R ±10% 0402 MLCC", False),
+        ],
+    )
+    def test_named_value_must_be_the_parts_value(self, query, description, relevant):
+        part = lcsc_client._row_to_part_jlcsearch(
+            dict(RESISTOR_ROW, description=description, mfr="X")
+        )
+        tokens = query.lower().split()
+        assert lcsc_client._is_relevant(part, tokens, []) is relevant
+
+
+class TestPackageGate:
+    @pytest.mark.parametrize(
+        "query, package, description, relevant",
+        [
+            ("TVS diode 30V SMB", "SMB(DO-214AA)", "30V 600W TVS Diode", True),
+            ("TVS diode 30V SMB", "DFN2x2-3", "30V 6kW TVS Diode", False),
+            ("10uF 0603", "0603", "10uF 10V X5R 0603 MLCC", True),
+            ("10uF 0603", "0402", "10uF 6.3V X5R 0402 MLCC", False),
+            ("3.3V LDO SOT-23-5", "SOT-23-5L", "3.3V 300mA LDO", True),
+            ("3.3V LDO SOT-23-5", "SOT-223", "3.3V 1A LDO", False),
+            ("3.3V LDO SOT23-5", "SMD", "3.3V LDO SOT-23-5", True),
+            ("R0603 4k7", "0603", "100mW 4.7kΩ Thick Film Resistor", True),
+        ],
+    )
+    def test_named_package_must_be_the_parts_package(self, query, package, description, relevant):
+        part = lcsc_client._row_to_part_jlcsearch(
+            dict(RESISTOR_ROW, package=package, description=description, mfr="X")
+        )
+        assert lcsc_client._is_relevant(part, query.lower().split(), []) is relevant
+
+
+class TestJlcpcbFallback:
+    async def test_part_number_query_is_answered_by_jlcpcb(self):
+        client = make_fake_client(
+            {
+                "/components/list": components(JUNK_FERRITE_ROW),
+                "jlcpcb": jlcpcb(JLCPCB_SS34_ROW, JLCPCB_SS34B_ROW),
+            }
+        )
+        results = await lcsc_client.search("SS34", client=client)
+        assert [p.lcsc for p in results] == ["C8678"]
+        part = results[0]
+        assert part.basic is True
+        assert part.stock == 3178009
+        assert part.price_usd == pytest.approx(0.0351)
+        assert part.package == "SMA(DO-214AC)"
+        assert part.extra["source"] == "jlcpcb"
+
+    async def test_part_number_goes_to_jlcpcb_first_and_alone(self):
+        bodies: list[dict] = []
+
+        def handler(body):
+            bodies.append(body)
+            return jlcpcb(JLCPCB_SS34_ROW, JLCPCB_SS34B_ROW)
+
+        client = make_fake_client({"jlcpcb": handler})
+        results = await lcsc_client.search("SS34 schottky SMB", basic_only=False, client=client)
+        assert bodies[0]["keyword"] == "ss34"
+        client.get.assert_not_called()
+        # Local ranking still uses the whole query: SMB beats SMA.
+        assert results[0].lcsc == "C13762"
+
+    async def test_extended_only_answer_respects_basic_only(self):
+        client = make_fake_client(
+            {"/components/list": components(), "jlcpcb": jlcpcb(JLCPCB_SS34B_ROW)}
+        )
+        assert await lcsc_client.search("SS34B", basic_only=True, client=client) == []
+
+    async def test_descriptive_query_falls_back_when_jlcsearch_is_empty(self):
+        row = dict(
+            JLCPCB_SS34_ROW,
+            componentCode="C2128",
+            componentModelEn="SMBJ30A",
+            describe="30V 600W Unidirectional TVS Diode SMB",
+        )
+        client = make_fake_client(
+            {"/components/list": components(JUNK_FERRITE_ROW), "jlcpcb": jlcpcb(row)}
+        )
+        results = await lcsc_client.search("TVS diode SMB", client=client)
+        assert [p.lcsc for p in results] == ["C2128"]
+
+    async def test_a_descriptive_search_sends_jlcpcb_one_request(self):
+        """jlcpcb.com refuses follow-ups; narrowing there would trip the cooldown."""
+        client = make_fake_client({"/components/list": components(), "jlcpcb": jlcpcb()})
+        await lcsc_client.search("TVS diode 30V 3000W SMB", basic_only=False, client=client)
+        assert client.post.call_count == 1
+
+    async def test_generic_nouns_are_dropped_from_the_jlcpcb_keyword(self):
+        bodies: list[dict] = []
+
+        def handler(body):
+            bodies.append(body)
+            return jlcpcb()
+
+        client = make_fake_client({"/components/list": components(), "jlcpcb": handler})
+        await lcsc_client.search("TVS diode 30V SMB", basic_only=False, client=client)
+        assert bodies[0]["keyword"] == "TVS 30V SMB"
+
+    async def test_jlcpcb_failure_degrades_to_no_results(self):
+        client = make_fake_client(
+            {"/components/list": components(), "jlcpcb": {"code": 500, "data": None}}
+        )
+        assert await lcsc_client.search("SS34", client=client) == []
+
+    async def test_descriptive_query_tries_jlcpcb_first_with_the_basic_filter(self):
+        bodies: list[dict] = []
+        row = dict(
+            JLCPCB_SS34_ROW,
+            componentCode="C25804",
+            componentModelEn="0603WAF1002T5E",
+            componentSpecificationEn="0603",
+            describe="100mW 10kΩ 75V Thick Film Resistor ±1% 0603 Chip Resistor",
+        )
+
+        def handler(body):
+            bodies.append(body)
+            return jlcpcb(row)
+
+        client = make_fake_client({"jlcpcb": handler})
+        results = await lcsc_client.search("10k 0603", basic_only=True, client=client)
+        assert [p.lcsc for p in results] == ["C25804"]
+        assert bodies[0]["componentLibraryType"] == "base"
+        client.get.assert_not_called()
+
+    async def test_a_refusal_is_honoured_not_retried(self):
+        """403 is jlcpcb.com declining an automated client. Ask again later."""
+        client = make_fake_client({"/components/list": components()})
+
+        async def refused(url, json=None, **kwargs):
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 403
+            return resp
+
+        client.post = AsyncMock(side_effect=refused)
+        assert await lcsc_client.search("SS34", client=client) == []
+        calls = client.post.call_count
+        assert calls == 1
+        # A second lookup during the cooldown does not ask again.
+        assert await lcsc_client.search("AMS1117", client=client) == []
+        assert client.post.call_count == calls
+
+    async def test_jlcpcb_can_be_disabled(self, monkeypatch):
+        monkeypatch.setattr(config, "JLCPCB_BASE", "")
+        client = make_fake_client(
+            {"/components/list": components(), "jlcpcb": jlcpcb(JLCPCB_SS34_ROW)}
+        )
+        assert await lcsc_client.search("SS34", client=client) == []
+        client.post.assert_not_called()
 
 
 class TestSearchPassives:
@@ -435,14 +749,29 @@ class TestSearchPassives:
         assert client.get.call_args_list[0].kwargs["params"]["is_basic"] == "true"
 
     async def test_falls_back_to_free_text_when_structured_finds_nothing(self):
+        ten_k = dict(
+            RESISTOR_ROW,
+            lcsc=25804,
+            description="100mW 10kΩ 75V Thick Film Resistor ±1% 0603 Chip Resistor",
+        )
         client = make_fake_client(
             {
                 "/resistors/list": {"resistors": []},
-                "/components/list": components(RESISTOR_ROW),
+                "/components/list": components(RESISTOR_ROW, ten_k),
             }
         )
         results = await lcsc_client.search("10k 0603", client=client)
-        assert [p.lcsc for p in results] == ["C23192"]
+        # RESISTOR_ROW is 510kΩ: it shares the package and contains "10k",
+        # and it must not be offered for a 10k.
+        assert [p.lcsc for p in results] == ["C25804"]
+
+    async def test_null_stock_is_unknown_not_zero(self):
+        """jlcsearch now serves `stock: null`; read as 0 it hid C25804."""
+        row = dict(STRUCTURED_RESISTOR_ROW, stock=None)
+        client = make_fake_client({"/resistors/list": {"resistors": [row]}})
+        results = await lcsc_client.search("10k 0603", client=client)
+        assert [p.lcsc for p in results] == ["C25804"]
+        assert results[0].extra["stock_unknown"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -503,6 +832,39 @@ class TestGetPart:
         assert part.stock == 37165617
         assert part.extra.get("stock_unknown") is not True
         assert part.stock_warning() is None
+
+    async def test_enrichment_asks_jlcsearch_by_c_number_first(self, easyeda):
+        client = make_fake_client({"/components/list": components()})
+        await lcsc_client.get_part("C25804", client=client)
+        first = client.get.call_args_list[0].kwargs["params"]["search"]
+        assert first == "C25804"
+
+    async def test_stock_is_enriched_from_jlcpcb_when_jlcsearch_lacks_it(self, easyeda):
+        row = dict(JLCPCB_SS34_ROW, componentCode="C25804", stockCount=1234567)
+        client = make_fake_client({"/components/list": components(), "jlcpcb": jlcpcb(row)})
+        part = await lcsc_client.get_part("C25804", client=client)
+        assert part.stock == 1234567
+        assert part.extra.get("stock_unknown") is not True
+
+    async def test_null_stock_jlcsearch_row_does_not_count_as_enrichment(self, easyeda):
+        row = dict(RESISTOR_ROW, lcsc=25804, stock=None)
+        jl = dict(JLCPCB_SS34_ROW, componentCode="C25804", stockCount=999)
+        client = make_fake_client({"/components/list": components(row), "jlcpcb": jlcpcb(jl)})
+        part = await lcsc_client.get_part("C25804", client=client)
+        assert part.stock == 999
+
+    async def test_zero_stock_jlcsearch_row_does_not_count_as_enrichment(self, easyeda):
+        # jlcsearch has reported 0 for C6186, which JLCPCB holds 1.7M of.
+        row = dict(RESISTOR_ROW, lcsc=25804, stock=0)
+        client = make_fake_client({"/components/list": components(row)})
+        part = await lcsc_client.get_part("C25804", client=client)
+        assert part.extra["stock_unknown"] is True
+
+    async def test_confirmed_zero_stock_warns_out_of_stock(self, easyeda):
+        row = dict(JLCPCB_SS34_ROW, componentCode="C25804", stockCount=0)
+        client = make_fake_client({"/components/list": components(), "jlcpcb": jlcpcb(row)})
+        part = await lcsc_client.get_part("C25804", client=client)
+        assert "OUT OF STOCK" in part.stock_warning()
 
     async def test_enrichment_ignores_a_different_c_number(self, easyeda):
         # A same-MPN row for a different C-number must not be adopted.
