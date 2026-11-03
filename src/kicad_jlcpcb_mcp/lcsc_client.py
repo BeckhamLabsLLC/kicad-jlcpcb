@@ -871,6 +871,10 @@ def _score(part: Part, tokens: list[str]) -> int:
         if not t:
             continue
         aliases = _value_aliases(t)
+        ohms = _parse_resistance(t)
+        if ohms is not None:
+            # "4k7" in a query is "4.7kΩ" in the catalog.
+            aliases = aliases | _resistance_aliases(ohms)
         if any(re.search(rf"(?<![0-9a-z]){re.escape(a)}(?![0-9a-z])", haystack) for a in aliases):
             total += 2
         elif any(a in haystack for a in aliases):
