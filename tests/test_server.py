@@ -441,9 +441,7 @@ class TestToolRoutingForEveryTool:
         assert seen["package"] is None
 
     @pytest.mark.asyncio
-    async def test_empty_search_tells_the_model_not_to_invent_a_c_number(
-        self, server, monkeypatch
-    ):
+    async def test_empty_search_tells_the_model_not_to_invent_a_c_number(self, server, monkeypatch):
         from kicad_jlcpcb_mcp import lcsc_client
 
         async def fake_search(query, **kwargs):
