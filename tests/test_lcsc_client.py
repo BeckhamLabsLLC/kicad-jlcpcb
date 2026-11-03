@@ -626,6 +626,23 @@ class TestJlcpcbFallback:
         results = await lcsc_client.search("TVS diode SMB", client=client)
         assert [p.lcsc for p in results] == ["C2128"]
 
+    async def test_jlcpcb_narrowing_is_bounded_and_stops_once_it_finds_parts(self):
+        bodies: list[dict] = []
+
+        def handler(body):
+            bodies.append(body)
+            return jlcpcb()
+
+        client = make_fake_client({"/components/list": components(), "jlcpcb": handler})
+        await lcsc_client.search("TVS diode 30V 3000W SMB", basic_only=False, client=client)
+        assert len(bodies) == lcsc_client.JLCPCB_MAX_REQUESTS_PER_SEARCH
+
+        bodies.clear()
+        hit = dict(JLCPCB_SS34_ROW, describe="30V 600W TVS Diode", componentSpecificationEn="SMB")
+        client = make_fake_client({"jlcpcb": lambda b: (bodies.append(b), jlcpcb(hit))[1]})
+        results = await lcsc_client.search("TVS diode 30V SMB", basic_only=False, client=client)
+        assert results and len(bodies) == 1
+
     async def test_generic_nouns_are_dropped_from_the_jlcpcb_keyword(self):
         bodies: list[dict] = []
 

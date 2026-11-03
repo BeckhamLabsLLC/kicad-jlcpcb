@@ -91,11 +91,13 @@ JLCPCB_PAGE_SIZE = 50
 # 403 (or 429) when it decides to. That is a refusal, not a transient
 # fault: we do not retry it or try to look less automated. We stop asking
 # for a cooldown period and let jlcsearch answer meanwhile. Requests are
-# also spaced, and a search sends at most one, so a normal session asks
-# about as often as a person browsing jlcpcb.com/parts would.
+# also spaced, and a search sends a second or third only while the
+# previous found nothing usable, so a normal session asks about as often as
+# a person refining a query on jlcpcb.com/parts would.
 JLCPCB_REFUSAL_STATUSES = {403, 429}
 JLCPCB_MIN_INTERVAL = 2.0
 JLCPCB_COOLDOWN = 300.0
+JLCPCB_MAX_REQUESTS_PER_SEARCH = 3
 
 USER_AGENT = "kicad-jlcpcb (+https://github.com/BeckhamLabsLLC/kicad-jlcpcb)"
 
@@ -1148,11 +1150,20 @@ async def search(
                 ranked = accept(await from_jlcpcb(kw, None))
                 if ranked:
                     break
-        # 2. Anything else: one JLCPCB request for the whole query. No
-        #    narrowing loop here: that would multiply requests to an
-        #    endpoint that refuses bursts. jlcsearch does the narrowing.
+        # 2. Anything else: JLCPCB, narrowing a little. A further request
+        #    is sent only while the previous one found nothing usable, 2s
+        #    apart, and none at all once jlcpcb.com has refused us. Three
+        #    is enough to drop an impossible spec ("3000W" on an SMB TVS,
+        #    which is a 600W package) without a burst.
         else:
-            ranked = accept(await from_jlcpcb(" ".join(raw_tokens), None))
+            ranked = await _search_narrowing(
+                from_jlcpcb,
+                raw_tokens,
+                package=None,
+                accept=accept,
+                max_attempts=JLCPCB_MAX_REQUESTS_PER_SEARCH,
+                label="jlcpcb.com",
+            )
 
         # 3. Chip passives: jlcsearch's structured routes.
         passive = _detect_passive(tokens)

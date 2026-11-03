@@ -34,8 +34,9 @@ Internally `lcsc_search`:
 1. **Searches a part number on its own.** If the query names one (`SS34`,
    `AMS1117-3.3`, `ESP32-C3`), that token goes to jlcpcb.com alone. Only parts
    carrying that part number are accepted.
-2. **Otherwise asks jlcpcb.com once with the whole query,** with JLCPCB's own
-   basic-only filter when `basic_only=true`.
+2. **Otherwise asks jlcpcb.com with the whole query,** with JLCPCB's own
+   basic-only filter when `basic_only=true`, dropping a word at most twice
+   if nothing usable comes back.
 3. **Falls back to jlcsearch:** first the structured resistor/capacitor
    routes, which filter on the parsed value, then free text. Free text drops
    the least-matchable words and retries, stopping at half the original word
