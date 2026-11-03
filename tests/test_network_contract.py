@@ -207,6 +207,23 @@ class TestEndToEnd:
         assert part.mfr_part == CANARY_MFR
         assert part.basic is True
 
+    async def test_a_descriptive_tvs_query_returns_results(self):
+        """The realistic form of the query from issue #1."""
+        results = await lcsc_client.search(
+            "TVS diode 30V SMB", basic_only=False, stock_min=100, limit=10
+        )
+        assert results, "descriptive TVS search found nothing"
+        assert any("SMB" in p.package.upper() for p in results)
+
+    @pytest.mark.xfail(
+        reason=(
+            "No such part: SMB TVS diodes are 600W, 3000W is an SMC package. It "
+            "used to 'pass' because narrowing dropped words until anything "
+            "matched. jlcpcb.com gets one request and finds nothing; jlcsearch's "
+            "free text is degraded (issue #9). Kept to show what that query does."
+        ),
+        strict=False,
+    )
     async def test_the_query_from_issue_1_returns_results(self):
         """github.com/BeckhamLabsLLC/kicad-jlcpcb/issues/1"""
         results = await lcsc_client.search(

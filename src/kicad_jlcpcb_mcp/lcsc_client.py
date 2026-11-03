@@ -91,13 +91,11 @@ JLCPCB_PAGE_SIZE = 50
 # 403 (or 429) when it decides to. That is a refusal, not a transient
 # fault: we do not retry it or try to look less automated. We stop asking
 # for a cooldown period and let jlcsearch answer meanwhile. Requests are
-# also spaced, and a search sends a second or third only while the
-# previous found nothing usable, so a normal session asks about as often as
-# a person refining a query on jlcpcb.com/parts would.
+# also spaced, and a search sends at most one.
 JLCPCB_REFUSAL_STATUSES = {403, 429}
 JLCPCB_MIN_INTERVAL = 2.0
 JLCPCB_COOLDOWN = 300.0
-JLCPCB_MAX_REQUESTS_PER_SEARCH = 3
+JLCPCB_MAX_REQUESTS_PER_SEARCH = 1
 
 USER_AGENT = "kicad-jlcpcb (+https://github.com/BeckhamLabsLLC/kicad-jlcpcb)"
 
@@ -1145,16 +1143,14 @@ async def search(
         # 1. A part number is searched on its own: JLCPCB ranks fuzzily, so
         #    "AMS1117-3.3" beats "AMS1117-3.3 LDO SOT-223". The rest of the
         #    query is left to local ranking.
+        #    Only the first part number: one jlcpcb.com request per search.
         if pn_tokens:
-            for kw in dict.fromkeys(pn_tokens[:2]):
-                ranked = accept(await from_jlcpcb(kw, None))
-                if ranked:
-                    break
-        # 2. Anything else: JLCPCB, narrowing a little. A further request
-        #    is sent only while the previous one found nothing usable, 2s
-        #    apart, and none at all once jlcpcb.com has refused us. Three
-        #    is enough to drop an impossible spec ("3000W" on an SMB TVS,
-        #    which is a 600W package) without a burst.
+            ranked = accept(await from_jlcpcb(pn_tokens[0], None))
+        # 2. Anything else: one JLCPCB request for the whole query. Not a
+        #    narrowing loop: jlcpcb.com reliably refuses the follow-up
+        #    request (observed from CI as well as locally), and a refusal
+        #    costs every search for the next five minutes. jlcsearch does
+        #    the narrowing.
         else:
             ranked = await _search_narrowing(
                 from_jlcpcb,

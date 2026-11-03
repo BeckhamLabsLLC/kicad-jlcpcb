@@ -47,9 +47,9 @@ and offered an 8.2k instead.
 
 ### Changed
 - jlcpcb.com protects its parts search against automated clients. The
-  plugin respects that: requests are spaced 2s apart, and a search sends a
-  second or third (narrowed) request only while the previous one found
-  nothing usable. A refusal (HTTP 403/429) is not retried. jlcpcb.com is skipped
+  plugin respects that: requests are spaced 2s apart and a search sends at
+  most one. (A follow-up request is reliably refused, from CI as well as
+  locally.) A refusal (HTTP 403/429) is not retried. jlcpcb.com is skipped
   for five minutes and jlcsearch answers meanwhile.
 - An empty `lcsc_search` result now carries a `hint` that tells the model
   to try a part number or fewer words, and never to invent a C-number.
