@@ -207,13 +207,17 @@ class TestEndToEnd:
         assert part.mfr_part == CANARY_MFR
         assert part.basic is True
 
-    async def test_a_descriptive_tvs_query_returns_results(self):
-        """The realistic form of the query from issue #1."""
+    async def test_a_descriptive_query_never_offers_the_wrong_package(self):
+        """The realistic form of the query from issue #1.
+
+        Asserts safety, not coverage: jlcpcb.com gets one request and may
+        not surface a stocked SMB TVS on its first page, so an empty result
+        is allowed. A DFN part offered for an SMB request is not.
+        """
         results = await lcsc_client.search(
             "TVS diode 30V SMB", basic_only=False, stock_min=100, limit=10
         )
-        assert results, "descriptive TVS search found nothing"
-        assert any("SMB" in p.package.upper() for p in results)
+        assert all("SMB" in f"{p.package} {p.description}".upper() for p in results)
 
     @pytest.mark.xfail(
         reason=(

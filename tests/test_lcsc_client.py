@@ -576,6 +576,27 @@ class TestValueGate:
         assert lcsc_client._is_relevant(part, tokens, []) is relevant
 
 
+class TestPackageGate:
+    @pytest.mark.parametrize(
+        "query, package, description, relevant",
+        [
+            ("TVS diode 30V SMB", "SMB(DO-214AA)", "30V 600W TVS Diode", True),
+            ("TVS diode 30V SMB", "DFN2x2-3", "30V 6kW TVS Diode", False),
+            ("10uF 0603", "0603", "10uF 10V X5R 0603 MLCC", True),
+            ("10uF 0603", "0402", "10uF 6.3V X5R 0402 MLCC", False),
+            ("3.3V LDO SOT-23-5", "SOT-23-5L", "3.3V 300mA LDO", True),
+            ("3.3V LDO SOT-23-5", "SOT-223", "3.3V 1A LDO", False),
+            ("3.3V LDO SOT23-5", "SMD", "3.3V LDO SOT-23-5", True),
+            ("R0603 4k7", "0603", "100mW 4.7kΩ Thick Film Resistor", True),
+        ],
+    )
+    def test_named_package_must_be_the_parts_package(self, query, package, description, relevant):
+        part = lcsc_client._row_to_part_jlcsearch(
+            dict(RESISTOR_ROW, package=package, description=description, mfr="X")
+        )
+        assert lcsc_client._is_relevant(part, query.lower().split(), []) is relevant
+
+
 class TestJlcpcbFallback:
     async def test_part_number_query_is_answered_by_jlcpcb(self):
         client = make_fake_client(

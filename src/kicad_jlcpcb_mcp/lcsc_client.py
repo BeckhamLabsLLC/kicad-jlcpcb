@@ -963,6 +963,35 @@ def _has_value(part: Part, aliases: set[str]) -> bool:
     return any(re.search(rf"(?<![0-9a-z.]){re.escape(a)}(?![0-9a-z])", hay) for a in aliases)
 
 
+# Package names with no digit that people put in queries.
+_BARE_PACKAGE_WORDS = {"sma", "smb", "smc", "smaf", "smbf", "dpak", "d2pak"}
+
+
+def _package_tokens(tokens: list[str]) -> list[str]:
+    """Tokens naming a package: "0603", "SOT-23-5", "SMB", "QFN-32"."""
+    return [
+        t
+        for t in tokens
+        if _CHIP_PACKAGE_RE.match(t) or _PACKAGE_TOKEN_RE.match(t) or t in _BARE_PACKAGE_WORDS
+    ]
+
+
+def _has_package(part: Part, token: str) -> bool:
+    """Punctuation-insensitive: "SOT-23-5" matches "SOT23-5" and "SOT-23-5L".
+
+    The description is searched too, because upstream sometimes puts the
+    real package there and a generic one ("SMD") in the package field.
+    """
+    want = _NON_ALNUM_RE.sub("", token.lower())
+    # "R0603" / "C0402" are KiCad footprint names; the catalog says "0603".
+    if re.fullmatch(r"[rcl]\d{4}", want):
+        want = want[1:]
+    if not want:
+        return True
+    hay = _NON_ALNUM_RE.sub("", f"{part.package} {part.description}".lower())
+    return want in hay
+
+
 def _is_relevant(part: Part, tokens: list[str], pn_tokens: list[str]) -> bool:
     """Does this part plausibly answer the query at all?
 
@@ -971,13 +1000,16 @@ def _is_relevant(part: Part, tokens: list[str], pn_tokens: list[str]) -> bool:
     "ESP32-C3-MINI-1"). Otherwise at least one query token must appear in
     its description, part number or package — and a value the query names
     ("10k", "100nF") must be the part's value, so a "10k 0603" query is not
-    answered with an 8.2k that merely shares the package. This is the gate
+    answered with an 8.2k that merely shares the package. A package the
+    query names ("0603", "SMB", "SOT-23-5") must be the part's package. This is the gate
     that stops an unrelated row from an upstream regression being offered.
     """
     if pn_tokens:
         hay = _NON_ALNUM_RE.sub("", f"{part.mfr_part} {part.lcsc} {part.description}".lower())
         return any(_NON_ALNUM_RE.sub("", t) in hay for t in pn_tokens)
     if not all(_has_value(part, aliases) for aliases in _value_token_aliases(tokens)):
+        return False
+    if not all(_has_package(part, t) for t in _package_tokens(tokens)):
         return False
     # A boundary match scores 2 and a substring 1 (see `_score`), so this
     # asks for roughly half the query on boundaries. One shared token is

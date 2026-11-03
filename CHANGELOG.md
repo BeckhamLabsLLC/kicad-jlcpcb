@@ -19,7 +19,8 @@ and offered an 8.2k instead.
 ### Fixed
 - **Every search result now passes a relevance gate.** A part number in the
   query must appear on the part, a value (`10k`, `100nF`) must be the part's
-  value, and a descriptive query must match about half its words. An
+  value, a package (`0603`, `SMB`, `SOT-23-5`) must be its package, and a
+  descriptive query must match about half its words. An
   upstream regression now produces an empty result instead of a wrong part
   in your BOM.
 - **jlcpcb.com's own parts search is now the first source.** Part numbers
