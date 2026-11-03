@@ -114,6 +114,19 @@ JLCSEARCH_BASE = os.environ.get("KJLC_JLCSEARCH_BASE", "https://jlcsearch.tscirc
 
 EASYEDA_BASE = os.environ.get("KJLC_EASYEDA_BASE", "https://easyeda.com").rstrip("/")
 
+#   JLCPCB_BASE     — the parts-search endpoint behind jlcpcb.com/parts.
+#                     Undocumented, but it is JLCPCB's own data: exact
+#                     part-number matching, live SMT stock, basic/extended
+#                     tier. Used first for part-number queries and as the
+#                     fallback when jlcsearch returns nothing relevant.
+#                     Set KJLC_JLCPCB_BASE="" to disable it entirely.
+#
+# Why a third source: in October 2026 jlcsearch's crawler rewrite left its
+# free-text route returning unrelated parts for part-number queries — a
+# search for "SS34" returned ferrite beads (issue #9). One source is not
+# enough for the feature everything else depends on.
+JLCPCB_BASE = os.environ.get("KJLC_JLCPCB_BASE", "https://jlcpcb.com").rstrip("/")
+
 # When sourcing parts, hard-prefer JLCPCB basic library (no setup fee).
 # Extended-tier parts are allowed but always warned with cost impact.
 PREFER_BASIC_PARTS = True

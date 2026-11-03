@@ -87,6 +87,46 @@ class TestJlcsearchFreeTextRoute:
         )
         assert nonsense == []
 
+    @pytest.mark.xfail(
+        reason=(
+            "Upstream regression since jlcsearch's Oct 2026 crawler rewrite: "
+            "part-number queries return unrelated parts (issue #9). The plugin "
+            "routes part numbers to jlcpcb.com instead. XPASS means it is fixed."
+        ),
+        strict=False,
+    )
+    async def test_part_number_query_returns_that_part(self, client):
+        rows = await lcsc_client._jlcsearch_components(client, search="SS34", limit=10)
+        assert rows
+        assert "SS34" in str(rows[0].get("mfr", "")).upper()
+
+
+class TestJlcpcbRoute:
+    """The jlcpcb.com parts search: primary source since issue #9."""
+
+    async def _search(self, keyword, **kwargs):
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as c:
+            return await lcsc_client._jlcpcb_search(c, keyword, **kwargs)
+
+    async def test_part_number_search_returns_that_part(self):
+        parts = await self._search("SS34")
+        assert parts, "jlcpcb.com returned nothing for SS34 (shape change, or refusing us)"
+        assert parts[0].mfr_part.upper().startswith("SS34")
+        assert parts[0].lcsc.startswith("C")
+        assert any(p.stock > 0 for p in parts), "stockCount missing or renamed"
+        assert any(p.price_usd > 0 for p in parts), "componentPrices missing or renamed"
+
+    async def test_c_number_search_is_exact(self):
+        parts = await self._search(CANARY_LCSC)
+        assert [p.lcsc for p in parts] == [CANARY_LCSC]
+        assert parts[0].mfr_part == CANARY_MFR
+
+    async def test_basic_filter_and_tier_field(self):
+        """`componentLibraryType` is the whole basic/extended split."""
+        parts = await self._search("10k 0603", basic_only=True)
+        assert parts, "basic filter returned nothing"
+        assert all(p.basic for p in parts), "componentLibraryType values changed"
+
 
 class TestJlcsearchStructuredRoutes:
     async def test_resistor_route_filters_on_ohms(self, client):
@@ -135,6 +175,13 @@ class TestEndToEnd:
         results = await lcsc_client.search("AMS1117-3.3", basic_only=True, limit=5)
         assert results, "no basic AMS1117-3.3 found"
         assert any(p.basic for p in results)
+        assert all("AMS1117" in p.mfr_part.upper() for p in results)
+
+    async def test_part_number_search_never_offers_an_unrelated_part(self):
+        """Issue #9: jlcsearch answered "SS34 SMB" with ferrite beads."""
+        results = await lcsc_client.search("SS34 SMB", basic_only=False, limit=5)
+        assert results, "SS34 not found"
+        assert all("SS34" in p.mfr_part.upper() for p in results)
 
     async def test_passive_search_returns_the_part_actually_asked_for(self):
         """The regression that matters most.
