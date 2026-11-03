@@ -74,24 +74,23 @@ Claude runs parallel `lcsc_search` calls, one per generic spec. Each returns the
 Claude assembles the picks into a BOM, calls `lcsc_resolve_bom`, and presents:
 
 ```
-Resolved BOM (13 parts, 1 unique extended):
+Resolved BOM (13 parts, 4 unique extended):
 
-  Ref  Part                LCSC     Tier      Stock     Price
-  U1   ESP32-C3-WROOM-02   C2934560 EXTENDED  15,230    $1.10  ⚠ +$3 setup fee
-  U2   AMS1117-3.3         C6186    basic     850,000   $0.05
-  J1   USB-C Receptacle    C2765186 basic     42,000    $0.18
-  J2-4 JST-PH 2P × 3       C144394  basic     120,000   $0.04
-  D1   LED 0603 green      C72043   basic     90,000    $0.01
-  R1   1k 0603 1%          C21190   basic     500,000   $0.001
-  R2   10k 0603 1%         C25804   basic     850,000   $0.001
-  C1   10uF 0603           C15850   basic     220,000   $0.02
-  C2   22uF 0603           C45783   basic     180,000   $0.03
-  C3-4 100nF 0603 X7R × 2  C14663   basic     1,200,000 $0.002
+  Ref  Part                  LCSC      Tier      JLCPCB stock
+  U1   ESP32-C3-WROOM-02     C2934560  EXTENDED  18,478      ⚠ +$3 setup fee
+  U2   AMS1117-3.3           C6186     basic     1,719,890
+  J1   USB-C TYPE-C-31-M-12  C165948   EXTENDED  169,238     ⚠ +$3 setup fee
+  J2-4 JST-PH 2P × 3         C131337   EXTENDED  216,418     ⚠ +$3 setup fee
+  D1   LED 0603 green        C72043    EXTENDED  ...         ⚠ +$3 setup fee
+  R1   1k 0603 1%            C21190    basic     ...
+  R2   10k 0603 1%           C25804    basic     45,498,111
+  C1   10uF 10V 0603         C19702    basic     11,187,062
+  C2   22uF 6.3V 0603        C59461    basic     4,394,021
+  C3-4 100nF 0603 X7R × 2    C14663    basic     ...
 
-  Estimated JLCPCB assembly setup fee: $3.00 (1 extended part × $3)
-  Part cost per board (qty 10): ~$1.82
+  Estimated JLCPCB assembly setup fee: $12.00 (4 extended parts × $3)
 
-Proceed, or swap the ESP32-C3-WROOM-02 for a basic-tier alternative?
+Proceed, or look for basic-tier alternatives to the connectors and LED?
 ```
 
 The session file is now at `stage: parts_sourced`. If you restart Claude Code here, `/pcb-new` will offer to resume from the BOM checkpoint.
